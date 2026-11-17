@@ -11,7 +11,7 @@
 //                 automatically (functional validation); the Natsumi-style
 //                 version ladder serves only as the fast-path shortcut.
 // @version        5.2.1
-// @author         Conot
+// @author         Conor
 // @license        MPL-2.0
 // @include        main
 // ==/UserScript==
