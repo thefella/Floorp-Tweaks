@@ -1,7 +1,7 @@
 # Floorp-Tweaks
 Fixing problems I have with Floorp browser
 
-
+chmod +x install-floorp-tweaks.sh
 
 Installs the relevant userChrome loader files from: 
 https://github.com/MrOtherGuy/fx-autoconfig

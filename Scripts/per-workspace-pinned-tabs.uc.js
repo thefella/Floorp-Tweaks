@@ -1,374 +1,294 @@
 // ==UserScript==
 // @name           Per-Workspace Pinned Tabs (Floorp)
-// @description    Remembers which tabs are pinned in each Floorp workspace and
-//                 re-applies the pin state on every workspace switch. Uses
-//                 Floorp's real workspace IDs (the per-tab floorpWorkspaceId
-//                 attribute) for exact identity, and persists pin sets across
-//                 restarts via a JSON file in the profile.
-// @version        3.1.0
+// @description    Shows only the active Floorp workspace's pinned tabs.
+//                 Standalone port of Natsumi Browser's
+//                 natsumi.tabs.workspace-specific-pins algorithm: pin state
+//                 is never mutated - foreign pins are hidden via an attribute
+//                 and CSS, current pins are reordered to the front. An
+//                 idempotent updater re-runs on every tab-list change, so
+//                 races self-heal. The current workspace is read from
+//                 Floorp's own workspaces module.
+// @version        5.1.0
 // @author         Conot
 // @license        MPL-2.0
 // @include        main
 // ==/UserScript==
 
-
 /*
- * HOW TO INSTALL
- * --------------
- * 1. Open Floorp and type about:support in the address bar
- * 2. Find "Profile Folder" and click Open Folder
- * 3. Create a chrome folder inside it if one doesn't exist
- * 4. Save the script there (e.g. per-workspace-pins.uc.js — the .uc.js extension is what Floorp's userChrome loader picks up)
- * 5. Make sure userChrome scripts are enabled: about:config → toolkit.legacyUserProfileCustomizations.stylesheets → true, plus Floorp's own userScript setting if prompted
- * 6. Restart Floorp
-*/
-
-
-/*
- * HOW IT WORKS
- * ------------
- * Floorp stamps every tab with a `floorpWorkspaceId` attribute. This script
- * reads it - the same mechanism the Natsumi Browser suite uses for its
- * `natsumi.tabs.workspace-specific-pins` feature - but ships standalone:
+ * DESIGN (ported from Natsumi Browser, natsumi/scripts/workspaces.uc.mjs,
+ * MIT (c) Green @greeeen-dev - algorithm and Floorp module version ladder
+ * below derive from that file, trimmed to Floorp-only support):
  *
- *  - The active workspace is the workspace of the selected tab. A switch is
- *    detected via the tab panels' `select` event, with a TabShow/TabHide
- *    burst debounce as a secondary signal.
- *  - On a switch, the pinned tabs of the incoming workspace are made visible
- *    at the front of the strip; foreign-workspace pins are dealt with
- *    according to MODE (below).
- *  - Pin sets persist in <profile>/per-workspace-pinned-tabs.json keyed by
- *    stable workspace IDs, so restoration after a restart is exact. On boot
- *    only pins are ADDED, never removed.
+ *  - PIN STATE IS NEVER MUTATED. All pinned tabs stay pinned. Foreign-
+ *    workspace pins get `pwpt-workspace-hidden` and are hidden by CSS;
+ *    the current workspace's pins are moved to the front of the strip.
+ *  - The updater is IDEMPOTENT and re-runs on every tab-list mutation
+ *    (MutationObserver on #tabbrowser-arrowscrollbox). A wrong state after
+ *    a race is corrected by the very next DOM change.
+ *  - The current workspace comes from Floorp's internal workspaces module
+ *    (getSelectedWorkspaceID), with a version-laddered module path. If the
+ *    module cannot be imported (e.g. a Floorp update moved it - the same
+ *    maintenance Natsumi carries), the script degrades to reading the
+ *    selected tab's floorpWorkspaceId attribute, and logs a warning.
+ *  - Persistence is free: nothing is ever pinned/unpinned, so Floorp's
+ *    session store preserves every pin and its workspace assignment across
+ *    restarts. No JSON file.
  *
- * MODES
- * -----
- *  "rebind" (default): foreign pinned tabs are actually unpinned and the
- *      recorded tabs re-pinned. Fully standalone - no CSS needed. Cost:
- *      pin/unpin churn on every switch (slightly rewrites session history,
- *      affects Undo Close Tab of pinned tabs, resets pin order).
+ * REQUIRED CSS in userChrome.css:
  *
- *  "css": nothing is ever pinned or unpinned. Foreign pins keep their pin
- *      state; this script toggles a `pwpt-workspace-hidden` attribute and
- *      the pins are hidden by CSS instead (Natsumi's approach). Requires
- *      pasting the companion rules into userChrome.css AND having
- *      userChrome.css enabled in Floorp:
+ *    tab[pwpt-workspace-hidden] { display: none !important; }
  *
- *        @media (-moz-platform: any) {
- *          tab[pwpt-workspace-hidden] { display: none !important; }
- *        }
- *        /* keep the strip's padding tidy when a workspace has no pins *\/
- *        #pinned-tabs-container:has(> tab:not([pwpt-workspace-hidden])) {
- *          /* adjusts automatically; nothing to do *\/
- *        }
+ * IF SWITCHING BREAKS AFTER A FLOORP UPDATE: bump workspacesModulePath
+ * below (open Browser Toolbox and find the current indexNN.js under
+ * chrome://noraneko/content/assets/js/). Same failure mode Natsumi has.
  *
- *      If you use "css" mode with horizontal tabs, the pinned area still
- *      reserves its width; hiding via display:none removes the tabs but the
- *      splitter width may linger - add to userChrome.css if you see it:
- *
- *        #vertical-pinned-tabs-splitter[hidden="true"] { display: none !important; }
- *
- *      (Note: in css mode you may need to remove the block comment markers
- *      above if you paste it literally - see the MODE block at the top.)
- *
- * TRADE-OFF SUMMARY
- *  - "css" preserves pin state perfectly across switches (no churn) but
- *    depends on your userChrome.css being loaded.
- *  - "rebind" is self-contained but cycles pins on each switch.
- *
- * TROUBLESHOOTING: set DEBUG to true and watch the Browser Console
- * (Ctrl+Shift+J). SETTLE_MS tunes the debounce for show/hide bursts.
- *
- * If anything misbehaves on your Floorp version, the likeliest culprit is the floorpWorkspaceId attribute name or the v4.store preference drifting in a future release; a console check will show it immediately, and both are single-line fixes.
+ * TROUBLESHOOTING: set DEBUG to true, watch the Browser Console
+ * (Ctrl+Shift+J).
  */
 
 (() => {
   if (!window.gBrowser || window.__pwptLoaded) return;
   window.__pwptLoaded = true;
 
-  // ---- configuration ----
-  const MODE        = "rebind"; // "rebind" or "css" (see header for css rules)
-  const SETTLE_MS     = 250;   // quiet period after a show/hide burst
-  const POLL_MS       = 2000;  // safety-net reconcile frequency
-  const SAVE_DELAY_MS = 1500;  // debounce for the JSON file
-  const BOOT_DELAY_MS = 1200;  // wait after session restore before adopting
-  const DEBUG         = false;
-  // ----------------------
+  const DEBUG = false;
+  const log = (...a) => { if (DEBUG) console.log("[PWPT]", ...a); };
 
-  const g   = window.gBrowser;
-  const log = (...args) => { if (DEBUG) console.log("[PWPT]", ...args); };
+  const g = window.gBrowser;
 
-  // ---------------------------------------------------- workspace identity --
-  const WS_STORE_PREF = "floorp.workspaces.v4.store";
-
-  const readWsStore = () => {
-    try {
-      return JSON.parse(Services.prefs.getStringPref(WS_STORE_PREF, "{}"));
-    } catch (e) { return {}; }
-  };
-
-  const defaultWsId = () => {
-    const store = readWsStore();
-    return store.defaultID || "default";
-  };
-
-  const wsOf = (tab) =>
-    (tab && tab.getAttribute("floorpWorkspaceId")) || defaultWsId();
-
-  const currentWs = () => wsOf(g.selectedTab);
-
-  const tabUrl = (t) => {
-    try { return t.linkedBrowser.currentURI.spec; } catch (e) { return ""; }
-  };
-
-  const pinnedTabs = () => g.tabs.filter((t) => t.pinned);
-
-  // Ordered, de-duplicated URLs of the pinned tabs belonging to `ws`.
-  const pinnedUrlsFor = (ws) => {
-    const urls = [];
-    for (const t of pinnedTabs()) {
-      if (wsOf(t) !== ws) continue;
-      const u = tabUrl(t);
-      if (u && !urls.includes(u)) urls.push(u);
+  // =============== Floorp workspaces module (version ladder) ===============
+  // Ported from Natsumi Browser floorp-modules.sys.mjs (MIT, Green);
+  // Firedragon-specific overrides removed (Floorp-only script).
+  let workspacesModulePath = "chrome://noraneko/content/assets/js/index35.js";
+  try {
+    const ver = AppConstants.MOZ_APP_VERSION_DISPLAY.split("@")[0];
+    const minor = parseInt(ver.split(".")[1], 10);
+    const patch = parseInt(ver.split(".")[2], 10);
+    if (minor >= 20) {
+      // index35 (default)
+    } else if (minor >= 18) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index34.js";
+    } else if (minor >= 17) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index33.js";
+    } else if (minor >= 14) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index28.js";
+    } else if (minor >= 12) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index27.js";
+    } else if (minor > 9 || (minor === 9 && patch >= 2)) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index26.js";
+    } else if (minor === 9 && patch < 2) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index25.js";
+    } else if (minor >= 8) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index25.js";
+    } else if (minor >= 4) {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index23.js";
+    } else {
+      workspacesModulePath = "chrome://noraneko/content/assets/js/index22.js";
     }
-    return urls;
-  };
+  } catch (e) { log("version ladder failed", e); }
 
-  // ----------------------------------------------------------- persistence --
-  // { version: 3, workspaces: { <workspaceId>: [ordered pinned URLs] } }
-  const STORE_FILE = "per-workspace-pinned-tabs.json";
-  const store = { version: 3, workspaces: {} };
-  let storeLoaded = false;
-  let storeDirty  = false;
-  let saveTimer   = null;
-  let filePath    = null;
-  try { filePath = PathUtils.join(PathUtils.profileDir, STORE_FILE); }
-  catch (e) { log("no profile dir access", e); }
+  // ================== wrapper around Floorp's workspace API ================
+  const wrapper = {
+    module: null,
+    ctx: null,
+    properInit: false,
+    fallback: false, // true if module import/getCtx failed
+    queue: [],
+    interval: null,
 
-  const loadStore = async () => {
-    if (!filePath) { storeLoaded = true; return; }
-    try {
-      const data = await IOUtils.readJSON(filePath);
-      if (data && data.workspaces && typeof data.workspaces === "object") {
-        store.workspaces = data.workspaces;
-        log("loaded pin store:", Object.keys(data.workspaces).length,
-            "workspace(s)");
+    async init() {
+      try {
+        this.module = await import(workspacesModulePath);
+      } catch (e) {
+        log("could not import Floorp workspaces module:", e);
+        this.fallback = true;
+        this.setProperInit();
+        return;
       }
-    } catch (e) {
-      log("no saved data yet, starting fresh");
-    }
-    storeLoaded = true;
-  };
-
-  const flushStore = async () => {
-    if (!filePath || !storeDirty) return;
-    storeDirty = false;
-    try {
-      await IOUtils.writeJSON(filePath, store);
-      log("saved pin store to disk");
-    } catch (e) { log("save failed", e); storeDirty = true; }
-  };
-
-  const scheduleSave = () => {
-    if (!filePath) return;
-    storeDirty = true;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => { saveTimer = null; flushStore(); }, SAVE_DELAY_MS);
-  };
-
-  const savedPinsFor = (ws) => store.workspaces[ws] || [];
-
-  // ----------------------------------------------------------------- state --
-  const state = {
-    current: null,    // workspace ID we believe is active
-    applying: false,  // true while we drive the UI ourselves
-    timer: null,      // burst debounce timer
-    booted: false,    // set once the boot adopt has run
-  };
-
-  // Snapshot the live pins of `ws` into memory + disk.
-  const recordPins = (ws) => {
-    const urls = pinnedUrlsFor(ws);
-    store.workspaces[ws] = urls;
-    scheduleSave();
-    log("recorded pins for workspace", ws, `(${urls.length} URL(s))`);
-  };
-
-  // Make the pinned strip reflect `ws`. Foreign pins: hidden or unpinned
-  // depending on MODE; recorded pins are pinned and moved to the front.
-  const showPinsFor = (ws) => {
-    const wanted = new Set(savedPinsFor(ws));
-
-    for (const t of pinnedTabs()) {
-      if (wsOf(t) === ws) {
-        t.removeAttribute("pwpt-workspace-hidden");
-      } else if (MODE === "rebind") {
-        g.unpinTab(t);
-        if (!t.hidden) {
-          try { g.hideTab(t); } catch (e) { /* older builds may lack it */ }
-        }
+      try {
+        this.ctx = this.module._.getCtx();
+      } catch (e) {
+        log("could not get workspaces context:", e);
+      }
+      if (this.ctx) {
+        this.setProperInit();
       } else {
-        t.setAttribute("pwpt-workspace-hidden", "");
-      }
-    }
-
-    if (MODE === "rebind") {
-      for (const t of g.tabs) {
-        if (!t.pinned && !t.hidden && wsOf(t) === ws && wanted.has(tabUrl(t))) {
-          g.pinTab(t);
-        }
-      }
-    }
-
-    // Own pins of this workspace first, in saved order.
-    let index = 0;
-    for (const url of savedPinsFor(ws)) {
-      for (const t of pinnedTabs()) {
-        if (wsOf(t) === ws && tabUrl(t) === url) {
+        this.fallback = true;
+        this.setProperInit();
+        // Lazy retry: the context may become available slightly later.
+        this.interval = setInterval(() => {
           try {
-            g.moveTabTo(t, { elementIndex: index++ });
-          } catch (e) {
-            try { g.moveTabTo(t, g.tabs[index]); index++; } catch (e2) {}
+            const c = this.module._.getCtx();
+            if (c) {
+              this.ctx = c;
+              this.fallback = false;
+              clearInterval(this.interval);
+              this.interval = null;
+              this.setProperInit();
+              log("workspaces context retrieved on retry");
+            }
+          } catch (e) { /* keep retrying */ }
+        }, 100);
+      }
+    },
+
+    setProperInit() {
+      this.properInit = true;
+      for (const fn of this.queue) { try { fn(); } catch (e) { log(e); } }
+      this.queue = [];
+    },
+
+    defer(fn) { this.properInit ? fn() : this.queue.push(fn); },
+
+    // Best-effort current workspace: real API if available, otherwise the
+    // selected tab's stamp (fallback mode - less exact, but the idempotent
+    // updater limits any error to one DOM tick).
+    currentWS() {
+      if (this.ctx) {
+        try { return this.ctx.getSelectedWorkspaceID(); } catch (e) {}
+      }
+      return g.selectedTab.getAttribute("floorpWorkspaceId") || this.defaultWS();
+    },
+
+    defaultWS() {
+      if (this.ctx) {
+        try { return this.ctx.getDefaultWorkspaceID(); } catch (e) {}
+      }
+      try {
+        const store = JSON.parse(
+          Services.prefs.getStringPref("floorp.workspaces.v4.store", "{}"));
+        return store.defaultID || "default";
+      } catch (e) { return "default"; }
+    },
+
+    setWS(id) {
+      if (this.ctx && id) {
+        try { return this.ctx.tabManagerCtx.changeWorkspace(id); } catch (e) {}
+      }
+    },
+  };
+
+  // ======================= idempotent pins updater =========================
+  const hiddenAttr = "pwpt-workspace-hidden";
+
+  const setStripVisibility = () => {
+    const container = document.getElementById("pinned-tabs-container");
+    const splitter  = document.getElementById("vertical-pinned-tabs-splitter");
+    if (!container && !splitter) return; // horizontal tab layout: nothing to do
+    const anyVisible = g.tabs.some(
+      (t) => t.pinned && !t.hasAttribute(hiddenAttr));
+    if (container) container.toggleAttribute("hidden", !anyVisible);
+    if (splitter)  splitter.toggleAttribute("hidden", !anyVisible);
+  };
+
+  // Pure classification - safe to run as often as it is called.
+  const updatePinnedTabs = (dragActive = false) => {
+    const ws  = wrapper.currentWS();
+    const def = wrapper.defaultWS();
+    let shown = 0;
+    let changed = false;
+
+    for (const tab of g.tabs) {
+      if (!tab.pinned) continue;
+      const tws = tab.getAttribute("floorpWorkspaceId") ?? def;
+      if (tws === ws) {
+        if (tab.hasAttribute(hiddenAttr)) {
+          tab.removeAttribute(hiddenAttr);
+          changed = true;
+        }
+        if (tab.hasAttribute("hidden")) {
+          tab.removeAttribute("hidden");
+          changed = true;
+        }
+        // Own pins to the front of the strip, in current order.
+        try {
+          g.moveTabTo(tab, { elementIndex: shown++ });
+        } catch (e) { shown++; }
+      } else {
+        if (!tab.hasAttribute(hiddenAttr)) {
+          tab.setAttribute(hiddenAttr, "");
+          changed = true;
+        }
+        // During pinned-tab drags, hide for real so Floorp's drag code
+        // does not fight the strip (Natsumi's workaround).
+        if (dragActive) {
+          if (!tab.hasAttribute("hidden")) {
+            tab.setAttribute("hidden", "true");
+            changed = true;
           }
-          break;
+        } else if (tab.hasAttribute("hidden")) {
+          tab.removeAttribute("hidden");
+          changed = true;
         }
       }
     }
 
     try { g.tabContainer._invalidateCachedVisibleTabs(); } catch (e) {}
+    setStripVisibility();
+    if (changed) log("updatePinnedTabs changed state for ws", ws);
+  };
 
-    // Hide the strip entirely if this workspace has no own pins (css mode).
-    if (MODE === "css") {
-      const container = document.getElementById("pinned-tabs-container");
-      const splitter  = document.getElementById("vertical-pinned-tabs-splitter");
-      const anyVisible = pinnedTabs().some((t) => !t.hasAttribute("pwpt-workspace-hidden"));
-      if (container) container.toggleAttribute("hidden", !anyVisible);
-      if (splitter) splitter.toggleAttribute("hidden", !anyVisible);
+  // ================================ drivers ================================
+  // Relentless driver: re-classify on every change in the tab list. The
+  // updater is idempotent, so re-runs converge instead of looping.
+  const startObservers = () => {
+    const tabsList = document.getElementById("tabbrowser-arrowscrollbox");
+
+    const tabsListObserver = new MutationObserver(() => updatePinnedTabs(false));
+    if (tabsList) {
+      tabsListObserver.observe(tabsList,
+        { attributes: true, childList: true, subtree: true });
+    } else {
+      log("#tabbrowser-arrowscrollbox not found - observers not attached");
     }
-  };
 
-  // Disable the feature: release everything we hid (css mode).
-  const releaseAll = () => {
-    for (const t of pinnedTabs()) t.removeAttribute("pwpt-workspace-hidden");
-    const container = document.getElementById("pinned-tabs-container");
-    const splitter  = document.getElementById("vertical-pinned-tabs-splitter");
-    if (container) container.removeAttribute("hidden");
-    if (splitter) splitter.removeAttribute("hidden");
-  };
+    // Drag handling: observe dragActive on the pinned container (vertical
+    // tabs layouts only; harmless if absent).
+    const pinnedContainer = document.getElementById("pinned-tabs-container");
+    if (pinnedContainer) {
+      new MutationObserver(() => {
+        updatePinnedTabs(pinnedContainer.hasAttribute("dragActive"));
+      }).observe(pinnedContainer, { attributes: true, attributeFilter: ["dragActive"] });
 
-  // Called when the active workspace may have changed.
-  const onPossibleSwitch = () => {
-    if (!state.booted || state.applying) return;
-
-    const ws = currentWs();
-    if (ws === state.current) return;
-
-    state.applying = true;
-    try {
-      // 1. Snapshot the outgoing workspace's pins.
-      if (state.current !== null) recordPins(state.current);
-
-      // 2. First sighting of this workspace this session: seed the store
-      //    entry (empty if unknown).
-      if (!(ws in store.workspaces)) store.workspaces[ws] = [];
-
-      // 3. Swap the visible pin set.
-      showPinsFor(ws);
-      state.current = ws;
-      log("workspace switch ->", ws);
-    } finally {
-      state.applying = false;
+      new MutationObserver(() => setStripVisibility())
+        .observe(pinnedContainer, { childList: true });
     }
-  };
 
-  const schedule = () => {
-    if (state.timer) clearTimeout(state.timer);
-    state.timer = setTimeout(() => {
-      state.timer = null;
-      onPossibleSwitch();
-    }, SETTLE_MS);
-  };
-
-  // ------------------------------------------------------------ boot adopt --
-  // After session restore, re-apply the saved pins of the displayed
-  // workspace. Conservative: only pins matching URLs, never unpins.
-  const adoptSavedPins = () => {
-    if (!storeLoaded) return;
-    const ws = currentWs();
-    state.applying = true;
-    try {
-      const wanted = new Set(savedPinsFor(ws));
-      for (const t of g.tabs) {
-        if (!t.pinned && !t.hidden && wsOf(t) === ws && wanted.has(tabUrl(t))) {
-          g.pinTab(t);
+    // Selection changed: if the selected tab's workspace disagrees with
+    // Floorp's state, fix Floorp (Natsumi's onSelectEvent behaviour).
+    document.addEventListener("select", (event) => {
+      if (event.target && event.target.id !== "tabbrowser-tabpanels") return;
+      wrapper.defer(() => {
+        const tabWs = g.selectedTab.getAttribute("floorpWorkspaceId");
+        const cur   = wrapper.currentWS();
+        if (tabWs && tabWs !== cur) {
+          log("selected tab workspace", tabWs, "!= floorp state", cur,
+              "- syncing");
+          wrapper.setWS(tabWs);
         }
-      }
-      // Adopt the saved set as this workspace's pins of record.
-      if (pinnedUrlsFor(ws).length || !savedPinsFor(ws).length) {
-        recordPins(ws);
-      }
-      showPinsFor(ws);
-      state.current = ws;
-      state.booted = true;
-      scheduleSave();
-      log("boot adopt for workspace", ws,
-          wanted.size ? `(${wanted.size} saved URL(s))` : "(none saved)");
-    } finally {
-      state.applying = false;
-    }
+        updatePinnedTabs(false);
+      });
+    }, true);
+
+    // Workspace registry changed (created/renamed/deleted workspaces).
+    try {
+      Services.prefs.addObserver("floorp.workspaces.v4.store", () => {
+        updatePinnedTabs(false);
+      });
+    } catch (e) { /* prefs API unavailable */ }
+
+    updatePinnedTabs(false);
   };
 
-  Promise.all([
-    loadStore(),
-    new Promise((resolve) => {
-      if (g.visibleTabs.length) { resolve(); return; }
-      window.addEventListener("SSTabRestored", resolve, { once: true });
-    }),
-  ]).then(() => {
-    setTimeout(adoptSavedPins, BOOT_DELAY_MS);
+  // Boot: no adoption step, no store - just start filtering once the
+  // workspace context is available.
+  wrapper.init().then(() => {
+    log("started; properInit =", wrapper.properInit,
+        "fallback =", wrapper.fallback);
+    startObservers();
+  }).catch((e) => {
+    log("init failed - starting in fallback mode anyway", e);
+    wrapper.fallback = true;
+    wrapper.properInit = true;
+    startObservers();
   });
-
-  // -------------------------------------------------------------- wiring ----
-  // Primary signal: the selected tab changed (mirrors Natsumi's onSelectEvent).
-  document.addEventListener("select", (event) => {
-    if (event.target && event.target.id !== "tabbrowser-tabpanels") return;
-    if (state.timer) { clearTimeout(state.timer); state.timer = null; }
-    onPossibleSwitch();
-  }, true);
-
-  // Secondary signal: show/hide bursts (covers toolbar-button switches).
-  window.addEventListener("TabHide", schedule, true);
-  window.addEventListener("TabShow", schedule, true);
-
-  // Manual pin/unpin by the user is recorded on the fly.
-  const onManualPinChange = () => {
-    if (state.applying || state.current === null || !state.booted) return;
-    recordPins(state.current);
-  };
-  window.addEventListener("TabPinned",   onManualPinChange, true);
-  window.addEventListener("TabUnpinned", onManualPinChange, true);
-
-  // Safety net: re-record in case a pin change bypassed the events.
-  const poll = setInterval(() => {
-    if (!state.applying && state.booted && state.current !== null) {
-      recordPins(state.current);
-    }
-  }, POLL_MS);
-
-  window.addEventListener("unload", () => {
-    clearInterval(poll);
-    if (state.timer) clearTimeout(state.timer);
-    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
-    if (state.booted && state.current !== null) recordPins(state.current);
-    flushStore(); // fire-and-forget; best effort on shutdown
-  }, { once: true });
-
-  // Respect the feature being toggled off: release hidden pins.
-  try {
-    Services.prefs.addObserver("floorp.workspaces.v4.store", () => {
-      if (!state.booted || state.applying) return;
-      // Workspace set changed (created/deleted) - just re-assert state.
-      if (!state.applying) showPinsFor(state.current);
-    });
-  } catch (e) { /* prefs API unavailable */ }
 })();
