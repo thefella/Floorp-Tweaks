@@ -7,8 +7,10 @@
 //                 and CSS, current pins are reordered to the front. An
 //                 idempotent updater re-runs on every tab-list change, so
 //                 races self-heal. The current workspace is read from
-//                 Floorp's own workspaces module.
-// @version        5.1.0
+//                 Floorp's own workspaces module, which is located
+//                 automatically (functional validation); the Natsumi-style
+//                 version ladder serves only as the fast-path shortcut.
+// @version        5.2.0
 // @author         Conot
 // @license        MPL-2.0
 // @include        main
@@ -16,8 +18,8 @@
 
 /*
  * DESIGN (ported from Natsumi Browser, natsumi/scripts/workspaces.uc.mjs,
- * MIT (c) Green @greeeen-dev - algorithm and Floorp module version ladder
- * below derive from that file, trimmed to Floorp-only support):
+ * MIT (c) Green @greeeen-dev - algorithm and version ladder derive from
+ * that file, trimmed to Floorp-only support):
  *
  *  - PIN STATE IS NEVER MUTATED. All pinned tabs stay pinned. Foreign-
  *    workspace pins get `pwpt-workspace-hidden` and are hidden by CSS;
@@ -25,11 +27,14 @@
  *  - The updater is IDEMPOTENT and re-runs on every tab-list mutation
  *    (MutationObserver on #tabbrowser-arrowscrollbox). A wrong state after
  *    a race is corrected by the very next DOM change.
- *  - The current workspace comes from Floorp's internal workspaces module
- *    (getSelectedWorkspaceID), with a version-laddered module path. If the
- *    module cannot be imported (e.g. a Floorp update moved it - the same
- *    maintenance Natsumi carries), the script degrades to reading the
- *    selected tab's floorpWorkspaceId attribute, and logs a warning.
+ *  - MODULE DISCOVERY: Floorp's internal workspaces module lives at
+ *    chrome://noraneko/content/assets/js/indexNN.js, where NN moves with
+ *    each Floorp release. The version ladder below provides the expected
+ *    path (fast path, normally correct). If that module fails to import
+ *    or does not expose _.getCtx(), the script scans candidate indexNN.js
+ *    bundles and adopts the first one that VALIDATES functionally (must
+ *    export _ with a getCtx function). If nothing validates, the script
+ *    degrades to reading the selected tab's floorpWorkspaceId attribute.
  *  - Persistence is free: nothing is ever pinned/unpinned, so Floorp's
  *    session store preserves every pin and its workspace assignment across
  *    restarts. No JSON file.
@@ -37,10 +42,6 @@
  * REQUIRED CSS in userChrome.css:
  *
  *    tab[pwpt-workspace-hidden] { display: none !important; }
- *
- * IF SWITCHING BREAKS AFTER A FLOORP UPDATE: bump workspacesModulePath
- * below (open Browser Toolbox and find the current indexNN.js under
- * chrome://noraneko/content/assets/js/). Same failure mode Natsumi has.
  *
  * TROUBLESHOOTING: set DEBUG to true, watch the Browser Console
  * (Ctrl+Shift+J).
@@ -55,36 +56,70 @@
 
   const g = window.gBrowser;
 
-  // =============== Floorp workspaces module (version ladder) ===============
-  // Ported from Natsumi Browser floorp-modules.sys.mjs (MIT, Green);
-  // Firedragon-specific overrides removed (Floorp-only script).
-  let workspacesModulePath = "chrome://noraneko/content/assets/js/index35.js";
-  try {
+  // =============== Floorp workspaces module discovery ======================
+  const MODULE_BASE = "chrome://noraneko/content/assets/js/";
+
+  // Fast path: the Natsumi-derived ladder (Floorp-only; Firedragon paths
+  // removed). Maps Floorp minor/patch versions to the module bundle that
+  // carried the workspaces code at that release.
+  const ladderPath = () => {
     const ver = AppConstants.MOZ_APP_VERSION_DISPLAY.split("@")[0];
     const minor = parseInt(ver.split(".")[1], 10);
     const patch = parseInt(ver.split(".")[2], 10);
-    if (minor >= 20) {
-      // index35 (default)
-    } else if (minor >= 18) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index34.js";
-    } else if (minor >= 17) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index33.js";
-    } else if (minor >= 14) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index28.js";
-    } else if (minor >= 12) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index27.js";
-    } else if (minor > 9 || (minor === 9 && patch >= 2)) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index26.js";
-    } else if (minor === 9 && patch < 2) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index25.js";
-    } else if (minor >= 8) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index25.js";
-    } else if (minor >= 4) {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index23.js";
-    } else {
-      workspacesModulePath = "chrome://noraneko/content/assets/js/index22.js";
+    if (minor >= 20) return MODULE_BASE + "index35.js";
+    if (minor >= 18) return MODULE_BASE + "index34.js";
+    if (minor >= 17) return MODULE_BASE + "index33.js";
+    if (minor >= 14) return MODULE_BASE + "index28.js";
+    if (minor >= 12) return MODULE_BASE + "index27.js";
+    if (minor > 9 || (minor === 9 && patch >= 2))
+      return MODULE_BASE + "index26.js";
+    if (minor === 9 && patch < 2) return MODULE_BASE + "index25.js";
+    if (minor >= 8) return MODULE_BASE + "index25.js";
+    if (minor >= 4) return MODULE_BASE + "index23.js";
+    return MODULE_BASE + "index22.js";
+  };
+
+  // Functional validation: a candidate bundle counts as the workspaces
+  // module only if it exposes the exact API surface we call.
+  const isValidModule = (mod) =>
+    !!mod && typeof mod._?.getCtx === "function";
+
+  // Locate the workspaces module: ladder first (usually hits), then a
+  // bounded scan over candidate bundle numbers, newest first.
+  const SCAN_MAX = 60; // headroom above the current highest known (35)
+  const SCAN_MIN = 22; // lowest known bundle
+
+  const detectWorkspacesModule = async () => {
+    const expected = (() => {
+      try { return ladderPath(); } catch (e) { return null; }
+    })();
+
+    if (expected) {
+      try {
+        const mod = await import(expected);
+        if (isValidModule(mod)) {
+          log("workspaces module via ladder:", expected);
+          return { path: expected, mod };
+        }
+        log("ladder module loaded but exposes no _.getCtx - scanning");
+      } catch (e) {
+        log("ladder import failed:", e.message || e, "- scanning");
+      }
     }
-  } catch (e) { log("version ladder failed", e); }
+
+    for (let n = SCAN_MAX; n >= SCAN_MIN; n--) {
+      const path = `${MODULE_BASE}index${n}.js`;
+      if (path === expected) continue; // already tried
+      try {
+        const mod = await import(path);
+        if (isValidModule(mod)) {
+          log("workspaces module auto-detected:", path);
+          return { path, mod };
+        }
+      } catch (e) { /* bundle absent or not the workspaces one - next */ }
+    }
+    return null;
+  };
 
   // ================== wrapper around Floorp's workspace API ================
   const wrapper = {
@@ -96,10 +131,11 @@
     interval: null,
 
     async init() {
-      try {
-        this.module = await import(workspacesModulePath);
-      } catch (e) {
-        log("could not import Floorp workspaces module:", e);
+      const found = await detectWorkspacesModule().catch(() => null);
+      if (found) {
+        this.module = found.mod;
+      } else {
+        log("no workspaces module found - attribute fallback mode");
         this.fallback = true;
         this.setProperInit();
         return;
