@@ -10,7 +10,7 @@
 //                 Floorp's own workspaces module, which is located
 //                 automatically (functional validation); the Natsumi-style
 //                 version ladder serves only as the fast-path shortcut.
-// @version        5.2.0
+// @version        5.2.1
 // @author         Conot
 // @license        MPL-2.0
 // @include        main
@@ -39,20 +39,23 @@
  *    session store preserves every pin and its workspace assignment across
  *    restarts. No JSON file.
  *
+ * LOGGING: all console output is tagged "[Floorp-Tweaks]". Messages are
+ * printed only when DEBUG is true; flip it and watch the Browser Console
+ * (Ctrl+Shift+J) to troubleshoot.
+ *
  * REQUIRED CSS in userChrome.css:
  *
  *    tab[pwpt-workspace-hidden] { display: none !important; }
- *
- * TROUBLESHOOTING: set DEBUG to true, watch the Browser Console
- * (Ctrl+Shift+J).
  */
 
 (() => {
   if (!window.gBrowser || window.__pwptLoaded) return;
   window.__pwptLoaded = true;
 
-  const DEBUG = false;
-  const log = (...a) => { if (DEBUG) console.log("[PWPT]", ...a); };
+  const LOG_TAG = "[Floorp-Tweaks]";
+  const DEBUG   = false;
+  const log     = (...a) => { if (DEBUG) console.log(LOG_TAG, ...a); };
+  const logErr  = (...a) => { if (DEBUG) console.error(LOG_TAG, ...a); };
 
   const g = window.gBrowser;
 
@@ -98,12 +101,12 @@
       try {
         const mod = await import(expected);
         if (isValidModule(mod)) {
-          log("workspaces module via ladder:", expected);
+          log("Workspaces module via ladder:", expected);
           return { path: expected, mod };
         }
-        log("ladder module loaded but exposes no _.getCtx - scanning");
+        log("Ladder module loaded but exposes no _.getCtx - scanning");
       } catch (e) {
-        log("ladder import failed:", e.message || e, "- scanning");
+        log("Ladder import failed:", e.message || e, "- scanning");
       }
     }
 
@@ -113,7 +116,7 @@
       try {
         const mod = await import(path);
         if (isValidModule(mod)) {
-          log("workspaces module auto-detected:", path);
+          log("Workspaces module auto-detected:", path);
           return { path, mod };
         }
       } catch (e) { /* bundle absent or not the workspaces one - next */ }
@@ -135,7 +138,7 @@
       if (found) {
         this.module = found.mod;
       } else {
-        log("no workspaces module found - attribute fallback mode");
+        log("No workspaces module found - attribute fallback mode");
         this.fallback = true;
         this.setProperInit();
         return;
@@ -143,7 +146,7 @@
       try {
         this.ctx = this.module._.getCtx();
       } catch (e) {
-        log("could not get workspaces context:", e);
+        logErr("Could not get workspaces context:", e);
       }
       if (this.ctx) {
         this.setProperInit();
@@ -160,7 +163,7 @@
               clearInterval(this.interval);
               this.interval = null;
               this.setProperInit();
-              log("workspaces context retrieved on retry");
+              log("Workspaces context retrieved on retry");
             }
           } catch (e) { /* keep retrying */ }
         }, 100);
@@ -169,7 +172,7 @@
 
     setProperInit() {
       this.properInit = true;
-      for (const fn of this.queue) { try { fn(); } catch (e) { log(e); } }
+      for (const fn of this.queue) { try { fn(); } catch (e) { logErr(e); } }
       this.queue = [];
     },
 
@@ -260,7 +263,7 @@
 
     try { g.tabContainer._invalidateCachedVisibleTabs(); } catch (e) {}
     setStripVisibility();
-    if (changed) log("updatePinnedTabs changed state for ws", ws);
+    if (changed) log("Updated pinned tabs for workspace", ws);
   };
 
   // ================================ drivers ================================
@@ -297,7 +300,7 @@
         const tabWs = g.selectedTab.getAttribute("floorpWorkspaceId");
         const cur   = wrapper.currentWS();
         if (tabWs && tabWs !== cur) {
-          log("selected tab workspace", tabWs, "!= floorp state", cur,
+          log("Selected tab workspace", tabWs, "!= Floorp state", cur,
               "- syncing");
           wrapper.setWS(tabWs);
         }
@@ -318,11 +321,11 @@
   // Boot: no adoption step, no store - just start filtering once the
   // workspace context is available.
   wrapper.init().then(() => {
-    log("started; properInit =", wrapper.properInit,
+    log("Started; properInit =", wrapper.properInit,
         "fallback =", wrapper.fallback);
     startObservers();
   }).catch((e) => {
-    log("init failed - starting in fallback mode anyway", e);
+    logErr("Init failed - starting in fallback mode anyway:", e);
     wrapper.fallback = true;
     wrapper.properInit = true;
     startObservers();
