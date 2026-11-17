@@ -1,0 +1,10 @@
+@media (-moz-platform: any) {
+
+    tab[pwpt-workspace-hidden] {
+        display: none !important;
+    }
+
+    #vertical-pinned-tabs-splitter[hidden="true"] {
+        display: none !important;
+    }
+}
