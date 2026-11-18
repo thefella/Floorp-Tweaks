@@ -1,0 +1,18 @@
+/* Tabs not loaded yet / pending */
+.tabbrowser-tab[pending="true"] {
+
+    & .tab-icon-stack {
+        opacity: 0.5 !important;
+    }
+}
+
+/* Tabs unloaded / suspended / discarded */
+.tabbrowser-tab[discarded] {
+
+    /* filter: saturate(0.5) !important; */
+    text-decoration: line-through !important;
+
+    & .tab-icon-stack {
+        opacity: 0.4 !important;
+    }
+}
