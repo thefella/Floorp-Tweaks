@@ -10,8 +10,14 @@
 //                 Floorp's own workspaces module, which is located
 //                 automatically (functional validation); the Natsumi-style
 //                 version ladder serves only as the fast-path shortcut.
-// @version        5.2.1
-// @author         Conor
+//                 v5.3.0: when the last unpinned tab of the active workspace
+//                 closes, selection now stays inside the workspace.
+//                 v5.3.1: the keep-alive now captures the workspace at
+//                 TabClose time and defends it for a short window, so the
+//                 select-sync can no longer chase Firefox's post-close
+//                 pick into a foreign workspace before the correction runs.
+// @version        5.3.1
+// @author         Conor - https://github.com/thefella/Floorp-Tweaks
 // @license        MPL-2.0
 // @include        main
 // ==/UserScript==
@@ -38,6 +44,16 @@
  *  - Persistence is free: nothing is ever pinned/unpinned, so Floorp's
  *    session store preserves every pin and its workspace assignment across
  *    restarts. No JSON file.
+ *  - CLOSE KEEP-ALIVE (v5.3.1): on TabClose of an unpinned tab in the
+ *    active workspace, the workspace ID is CAPTURED IMMEDIATELY. Both the
+ *    synchronous check and a zero-delay batch-correction then defend that
+ *    captured workspace for KEEP_MS: if the selected tab is outside it,
+ *    the most recently accessed remaining tab of the captured workspace is
+ *    focused (last-used pinned tab when only pins remain), or a fresh tab
+ *    is opened there if the workspace has no tabs left. Crucially, the
+ *    select-sync SUSPENDS its workspace-following while the keep-alive is
+ *    armed - otherwise it would switch Floorp to the foreign workspace
+ *    Firefox briefly picked, before the correction could run.
  *
  * LOGGING: all console output is tagged "[Floorp-Tweaks]". Messages are
  * printed only when DEBUG is true; flip it and watch the Browser Console
@@ -206,6 +222,94 @@
     },
   };
 
+  // ============== close keep-alive: stay in the workspace ==================
+  // Firefox's post-close selection (TabClose -> removal -> new selection)
+  // knows nothing about workspaces: closing the last unpinned tab of a
+  // workspace can focus a neighbouring tab from ANOTHER workspace, and the
+  // select-sync below would then follow it across. The keep-alive captures
+  // the workspace at TabClose time and defends it for KEEP_MS.
+  const KEEP_MS = 500; // batch closes settle within one tick; 500ms is a
+                       // comfortable margin. Lower if a deliberate click on
+                       // another workspace's tab right after a close feels
+                       // blocked; raise it if the bug still slips through.
+
+  const lastAccessedOf = (t) => t.lastAccessed ?? t._lastAccessed ?? 0;
+  const wsOfTab = (t) =>
+    t.getAttribute("floorpWorkspaceId") ?? wrapper.defaultWS();
+
+  // Keep-alive state: the workspace that must retain the selection, and
+  // when the defence window expires.
+  let keepWS = null;
+  let keepUntil = 0;
+
+  const openFallbackTab = (ws) => {
+    let tab;
+    try {
+      tab = g.addTrustedTab(null, { skipAnimation: true });
+    } catch (e) {
+      tab = g.addTab();
+    }
+    tab.setAttribute("floorpWorkspaceId", ws);
+    g.selectedTab = tab;
+    log("Opened fallback tab in workspace", ws);
+  };
+
+  // If the selection sits outside `ws` while tabs of `ws` remain, move it
+  // to the most recently accessed remaining tab of `ws` (when only pinned
+  // tabs remain, that is the last-used pin). Returns true if it acted.
+  const enforceKeepWS = (ws, reason) => {
+    if (!ws) return false;
+    const stillInWs = g.tabs.filter(
+      (t) => !t.closing && wsOfTab(t) === ws);
+    if (stillInWs.length === 0) {
+      // Workspace holds no tabs any more - let normal behaviour proceed
+      // (also covers whole-window teardown).
+      keepWS = null;
+      return false;
+    }
+    const sel = g.selectedTab;
+    if (!sel.closing && wsOfTab(sel) === ws) {
+      keepWS = null; // selection is where it belongs; stand down
+      return false;
+    }
+    const succ = stillInWs
+      .slice()
+      .sort((a, b) => lastAccessedOf(b) - lastAccessedOf(a))[0];
+    g.selectedTab = succ;
+    log("Kept selection in workspace", ws, `(${reason})`);
+    return true;
+  };
+
+  let correctionTimer = null;
+  const onTabClose = (event) => {
+    const tab = event.target;
+    if (!tab || tab.pinned) return;
+    const ws = wsOfTab(tab);
+    if (ws !== wrapper.currentWS()) return; // close in a background workspace
+
+    // Capture NOW, before Firefox can move anything: every later check
+    // defends this captured ID rather than re-reading the (possibly
+    // already-poisoned) current workspace state.
+    keepWS = ws;
+    keepUntil = Date.now() + KEEP_MS;
+
+    // Fast path for a single close: try to steer selection synchronously,
+    // inside the TabClose dispatch. Firefox may still override afterwards,
+    // which is exactly what the deferred correction below handles.
+    if (!g._removingTabs || g._removingTabs.length <= 1) {
+      try { enforceKeepWS(keepWS, "sync pass"); } catch (e) { logErr(e); }
+    }
+    // Deferred correction: runs after the removal storm (single or batch)
+    // has settled, still defending the captured workspace.
+    if (correctionTimer) clearTimeout(correctionTimer);
+    correctionTimer = setTimeout(() => {
+      correctionTimer = null;
+      if (keepWS && Date.now() <= keepUntil) {
+        try { enforceKeepWS(keepWS, "deferred pass"); } catch (e) { logErr(e); }
+      }
+    }, 0);
+  };
+
   // ======================= idempotent pins updater =========================
   const hiddenAttr = "pwpt-workspace-hidden";
 
@@ -292,13 +396,26 @@
         .observe(pinnedContainer, { childList: true });
     }
 
-    // Selection changed: if the selected tab's workspace disagrees with
-    // Floorp's state, fix Floorp (Natsumi's onSelectEvent behaviour).
+    // Selection changed: normally, if the selected tab's workspace
+    // disagrees with Floorp's state, fix Floorp (Natsumi's onSelectEvent
+    // behaviour). EXCEPTION: while the close keep-alive is armed, a
+    // foreign-workspace selection is exactly the transient Firefox gives
+    // us right after a close - chasing it would defeat the correction.
+    // Re-steer selection to the captured workspace instead, and only
+    // resume workspace-following once the selection is back inside it (or
+    // the KEEP_MS window has expired).
     document.addEventListener("select", (event) => {
       if (event.target && event.target.id !== "tabbrowser-tabpanels") return;
       wrapper.defer(() => {
         const tabWs = g.selectedTab.getAttribute("floorpWorkspaceId");
         const cur   = wrapper.currentWS();
+
+        if (keepWS && Date.now() <= keepUntil && tabWs && tabWs !== keepWS) {
+          try { enforceKeepWS(keepWS, "select guard"); } catch (e) { logErr(e); }
+          updatePinnedTabs(false);
+          return; // do NOT sync Floorp to the foreign workspace
+        }
+
         if (tabWs && tabWs !== cur) {
           log("Selected tab workspace", tabWs, "!= Floorp state", cur,
               "- syncing");
@@ -307,6 +424,10 @@
         updatePinnedTabs(false);
       });
     }, true);
+
+    // Close keep-alive: registered on the window so it catches TabClose
+    // regardless of which element dispatches it.
+    window.addEventListener("TabClose", onTabClose);
 
     // Workspace registry changed (created/renamed/deleted workspaces).
     try {
