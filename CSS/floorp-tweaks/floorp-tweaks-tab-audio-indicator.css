@@ -1,5 +1,7 @@
 /* Make tab audio indicator button non-clickable */
-.tab-audio-button {
-    opacity: 0.55 !important;
-    pointer-events: none !important;
+@media -moz-pref("floorptweaks.audioIndicatorButton.disabled") {
+    .tab-audio-button {
+        opacity: 0.55 !important;
+        pointer-events: none !important;
+    }
 }

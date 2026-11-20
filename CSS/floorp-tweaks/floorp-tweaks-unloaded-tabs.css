@@ -1,18 +1,22 @@
-/* Tabs not loaded yet / pending */
-.tabbrowser-tab[pending="true"] {
+/* Make unloaded / pending tabs more obvious */
+@media -moz-pref("floorptweaks.obviousUnloadedTabs") {
 
-    & .tab-icon-stack {
-        opacity: 0.5 !important;
+    /* Tabs not loaded yet / pending */
+    .tabbrowser-tab[pending="true"] {
+
+        & .tab-icon-stack {
+            opacity: 0.5 !important;
+        }
     }
-}
 
-/* Tabs unloaded / suspended / discarded */
-.tabbrowser-tab[discarded] {
+    /* Tabs unloaded / suspended / discarded */
+    .tabbrowser-tab[discarded] {
 
-    /* filter: saturate(0.5) !important; */
-    text-decoration: line-through !important;
+        /* filter: saturate(0.5) !important; */
+        text-decoration: line-through !important;
 
-    & .tab-icon-stack {
-        opacity: 0.4 !important;
+        & .tab-icon-stack {
+            opacity: 0.4 !important;
+        }
     }
 }
