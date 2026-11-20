@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# install-floorp-userchrome-suite.sh
+# install-floorp-tweaks.sh
 #
 # Full installer for Floorp user-script customisation on macOS. Installs:
 #
@@ -10,10 +10,14 @@
 #        profile/  -> chrome/JS, chrome/resources, chrome/utils
 #                    into the chosen Floorp profile folder
 #   2. Floorp-Tweaks (thefella/Floorp-Tweaks):
-#        Scripts/*.uc.js -> <profile>/chrome/JS/
-#        CSS/*.css       -> <profile>/chrome/CSS/
-#        and appends @import lines for the CSS into userChrome.css
-#        (idempotent - never duplicated).
+#        Scripts/*.uc.js            -> <profile>/chrome/JS/
+#        CSS/floorp-tweaks.css      -> <profile>/chrome/CSS/
+#        CSS/floorp-tweaks/*.css    -> <profile>/chrome/CSS/floorp-tweaks/
+#        and appends ONE @import line for floorp-tweaks.css into
+#        userChrome.css (idempotent - never duplicated). floorp-tweaks.css
+#        itself imports everything in the floorp-tweaks/ folder.
+#        Any legacy per-file @import lines from earlier versions of this
+#        installer are removed from userChrome.css.
 #
 # Profile selection:
 #   - Pass a profile path or name as argument 2, or set PROFILE_PATH env var.
@@ -21,9 +25,9 @@
 #   - Otherwise, if run from a terminal, an interactive menu is offered.
 #
 # Usage:
-#   ./install-floorp-userchrome-suite.sh                          # defaults
-#   ./install-floorp-userchrome-suite.sh /Applications/Floorp.app myprofile.default
-#   PROFILE_PATH=/path/to/profile ./install-floorp-userchrome-suite.sh
+#   ./install-floorp-tweaks.sh                          # defaults
+#   ./install-floorp-tweaks.sh /Applications/Floorp.app myprofile.default
+#   PROFILE_PATH=/path/to/profile ./install-floorp-tweaks.sh
 #
 # NOTE: Floorp updates REPLACE the app bundle - re-run this script after
 # every Floorp update (the profile-side files survive updates).
@@ -36,6 +40,8 @@ FX_RAW_REPO="MrOtherGuy/fx-autoconfig"
 FX_BRANCH="master"
 TWEAKS_REPO="thefella/Floorp-Tweaks"
 TWEAKS_BRANCH="main"
+TWEAKS_CSS="floorp-tweaks.css"          # single entry-point stylesheet
+TWEAKS_CSS_DIR="floorp-tweaks"          # folder it imports from
 DATA_DIR="$HOME/Library/Application Support/Floorp"
 PROFILES_INI="$DATA_DIR/profiles.ini"
 
@@ -169,33 +175,54 @@ done
 # --------------------------------------------------- 3. Floorp-Tweaks ------
 echo "== Installing Floorp-Tweaks =="
 mkdir -p "$CHROME_DIR/JS" "$CHROME_DIR/CSS"
+
+# 3a. Scripts -> chrome/JS/
 shopt -s nullglob
 scripts=("$TW_SRC"/Scripts/*.uc.js)
-styles=("$TW_SRC"/CSS/*.css)
 shopt -u nullglob
-if [[ ${#scripts[@]} -eq 0 && ${#styles[@]} -eq 0 ]]; then
-    echo "  WARNING: no Scripts or CSS files found in $TWEAKS_REPO - skipping"
+for f in "${scripts[@]:-}"; do
+    [[ -z "$f" ]] && continue
+    cp "$f" "$CHROME_DIR/JS/"
+    echo "  chrome/JS/$(basename "$f")"
+done
+
+# 3b. Single entry-point stylesheet + imported folder -> chrome/CSS/
+TW_CSS_SRC="$TW_SRC/CSS/$TWEAKS_CSS"
+TW_CSSDIR_SRC="$TW_SRC/CSS/$TWEAKS_CSS_DIR"
+if [[ ! -f "$TW_CSS_SRC" ]]; then
+    echo "  ERROR: $TWEAKS_REPO@$TWEAKS_BRANCH does not contain CSS/$TWEAKS_CSS."
+    echo "         Was the repo restructured, or is the change not pushed yet?"
+    exit 1
+fi
+if [[ ! -d "$TW_CSSDIR_SRC" ]]; then
+    echo "  ERROR: CSS/$TWEAKS_CSS_DIR/ folder not found in $TWEAKS_REPO@$TWEAKS_BRANCH."
+    exit 1
+fi
+cp "$TW_CSS_SRC" "$CHROME_DIR/CSS/"
+echo "  chrome/CSS/$TWEAKS_CSS"
+# Refresh the imported folder wholesale (remove stale copies of retired files).
+rm -rf "$CHROME_DIR/CSS/$TWEAKS_CSS_DIR"
+mkdir -p "$CHROME_DIR/CSS/$TWEAKS_CSS_DIR"
+cp -R "$TW_CSSDIR_SRC/." "$CHROME_DIR/CSS/$TWEAKS_CSS_DIR/"
+echo "  chrome/CSS/$TWEAKS_CSS_DIR/  ($(find "$CHROME_DIR/CSS/$TWEAKS_CSS_DIR" -type f | wc -l | tr -d ' ') files)"
+
+# 3c. Register the single @import in userChrome.css (idempotent),
+#     and strip legacy per-file imports from older installer versions.
+UC="$CHROME_DIR/userChrome.css"
+[[ -f "$UC" ]] || touch "$UC"
+if grep -qE '^/\* Floorp-Tweaks \*/$|@import url\("\./CSS/floorp-tweaks-[^"]+\.css"\);' "$UC"; then
+    TMP_UC="$(mktemp)"
+    grep -vE '^/\* Floorp-Tweaks \*/$|@import url\("\./CSS/floorp-tweaks-[^"]+\.css"\);' \
+        "$UC" > "$TMP_UC" || true
+    mv "$TMP_UC" "$UC"
+    echo "  removed legacy per-file imports from userChrome.css"
+fi
+IMPORT="@import url(\"./CSS/$TWEAKS_CSS\");"
+if ! grep -qF "CSS/$TWEAKS_CSS" "$UC"; then
+    printf '\n/* Floorp-Tweaks */\n%s\n' "$IMPORT" >> "$UC"
+    echo "    + imported $TWEAKS_CSS in userChrome.css"
 else
-    for f in "${scripts[@]:-}"; do
-        [[ -z "$f" ]] && continue
-        cp "$f" "$CHROME_DIR/JS/"
-        echo "  chrome/JS/$(basename "$f")"
-    done
-    for f in "${styles[@]:-}"; do
-        [[ -z "$f" ]] && continue
-        cp "$f" "$CHROME_DIR/CSS/"
-        echo "  chrome/CSS/$(basename "$f")"
-        # Register in userChrome.css (idempotent).
-        UC="$CHROME_DIR/userChrome.css"
-        [[ -f "$UC" ]] || touch "$UC"
-        IMPORT="@import url(\"./CSS/$(basename "$f")\");"
-        if ! grep -qF "CSS/$(basename "$f")" "$UC"; then
-            printf '\n/* Floorp-Tweaks */\n%s\n' "$IMPORT" >> "$UC"
-            echo "    + imported in userChrome.css"
-        else
-            echo "    (already imported in userChrome.css)"
-        fi
-    done
+    echo "    (already imported in userChrome.css)"
 fi
 echo
 
