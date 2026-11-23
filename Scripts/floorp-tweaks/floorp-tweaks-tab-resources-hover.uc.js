@@ -19,7 +19,7 @@
 //                 browser-delayed-startup-finished. Figures are per
 //                 process: tabs sharing a content process show the same
 //                 values. CPU% appears from the second sample.
-// @version        1.4.0
+// @version        1.4.1
 // @author         Conor
 // @license        MPL-2.0
 // @include        main
@@ -87,7 +87,8 @@
   }
 
   function formatBytes(n) {
-    if (n >= 1024 ** 3) return Math.round(n / 1024 ** 3) + " GB";
+    //if (n >= 1024 ** 3) return Math.round(n / 1024 ** 3) + " GB";
+    if (n >= 1024 ** 3) return Math.round((n / 1024 ** 3 * 100)) / 100 + " GB";
     if (n >= 1024 ** 2) return Math.round(n / 1024 ** 2) + " MB";
     if (n >= 1024) return Math.round(n / 1024) + " KB";
     return n + " B";
@@ -239,18 +240,21 @@
     infoEl = document.createElement("div");
     infoEl.className = "tab-preview-resource-info";
     Object.assign(infoEl.style, {
-      opacity: "0.66",
+      opacity: "0.5",
       whiteSpace: "nowrap",
       marginTop: "0.3em",
+      "text-align": "right",
+      "font-style": "italic",
     });
 
     if (!info) {
       const pending = hoveredTab?.getAttribute?.("pending") === "true";
-      infoEl.textContent = pending ? "Hibernated" : "Not loaded";
+      infoEl.textContent = pending ? "Unloaded" : "Not loaded";
     } else {
       const cpu =
-        info.cpu == null ? "measuring…" : info.cpu.toFixed(1) + "% CPU";
-      infoEl.textContent = formatBytes(info.mem) + " · " + cpu;
+        info.cpu == null ? "Sampling..." : info.cpu.toFixed(1) + "%";
+      //infoEl.textContent = formatBytes(info.mem) + " · " + cpu;
+      infoEl.textContent = "RAM: " + formatBytes(info.mem) + " • CPU: " + cpu;
       infoEl.tooltipText =
         `Process ${info.pid} (${info.origin})\n` +
         `Figures are per content process — shared tabs show the same values.`;
