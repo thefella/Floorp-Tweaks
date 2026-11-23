@@ -1,9 +1,16 @@
 // ==UserScript==
-// @name         History Expiry (Floorp Tweaks edition)
-// @description  Deletes browsing history older than the period chosen in Floorp Tweaks > History > Browsing history retention
-// @include      main
-// @charset      utf-8
-// @author       Conor
+// @name           History Expiry (Floorp Tweaks edition)
+// @description    Deletes browsing history older than the period chosen in
+//                 Floorp Tweaks > History > Browsing history retention.
+//                 Prunes via PlacesUtils.history.removeVisitsByFilter() with
+//                 a { beginDate, endDate } Date filter — v1.0.0 passed a
+//                 { beginTime, endTime } microsecond filter, which the API
+//                 rejects as empty, so no pruning ever occurred.
+// @version        1.0.1
+// @author         Conor
+// @license        MPL-2.0
+// @include        main
+// @charset        utf-8
 // ==/UserScript==
 
 "use strict";
@@ -28,6 +35,11 @@
  *     -1    forever (script idle, keep history indefinitely)
  *
  * Also self-seeds the pref (-1), so it works standalone.
+ *
+ * v1.0.1: removeVisitsByFilter() validates its filter against the keys
+ * beginDate/endDate/url/limit/transition only (verified in
+ * toolkit/components/places/History.sys.mjs). The old {beginTime, endTime}
+ * shape made every call throw "Expected a non-empty filter".
  */
 
 const { PlacesUtils } = ChromeUtils.importESModule(
@@ -44,7 +56,7 @@ const HistoryExpiry = {
   INTERVAL_MS: 60 * 60 * 1000,
 
   /** Anchor for "Session Only": when the current session began */
-  sessionStartedAtUs: Date.now() * 1000,
+  sessionStartedAt: new Date(),
 
   /* ------------------------------------------------------------------ */
   /* Pref access                                                        */
@@ -80,20 +92,21 @@ const HistoryExpiry = {
     const days = this.getRetentionDays();
     if (days < 0) return; // forever
 
-    // Places stores timestamps in microseconds since the epoch.
-    // removeVisitsByFilter wants { beginTime, endTime } in µs.
-    const endTimeUs =
-      days === 0
-        ? this.sessionStartedAtUs
-        : (Date.now() - days * 86_400_000) * 1000;
+    // removeVisitsByFilter wants Date objects in beginDate/endDate.
+    const endDate = days === 0 ? this.sessionStartedAt : new Date(Date.now() - days * 86_400_000);
+    const beginDate = new Date(0);
+
+    // Degenerate window (clock skew, or retention set before the epoch-
+    // anchored begin): nothing can match, don't call the API.
+    if (endDate <= beginDate) return;
 
     try {
       const removed = await PlacesUtils.history.removeVisitsByFilter({
-        beginTime: 0,
-        endTime: endTimeUs,
+        beginDate,
+        endDate,
       });
       console.info(
-        `[History-Expiry] removed ${removed} visit(s) older than ` +
+        `[History-Expiry] removed ${removed ? "old" : "0"} visit(s) older than ` +
         (days === 0 ? "session start" : `${days} day(s)`)
       );
     } catch (e) {
@@ -117,7 +130,7 @@ const HistoryExpiry = {
     // React immediately when the dropdown changes in the Tweaks pane.
     // Switching to "session" (0) re-anchors the cutoff at *now*.
     this._observer = () => {
-      this.sessionStartedAtUs = Date.now() * 1000; // re-anchor "Session Only"
+      this.sessionStartedAt = new Date(); // re-anchor "Session Only"
       this.prune();
     };
     Services.prefs.addObserver(this.PREF, this._observer);
