@@ -4,10 +4,14 @@
 //                 Vivaldi-style. Per-panel intervals are stored in the pref
 //                 "floorptweaks.panelReload" as JSON, keyed BY PANEL UUID:
 //                   { "<panel uuid>": minutes, ... }
-//                 Config keys matching NO current panel are PRUNED -
-//                 deleting a web panel in Floorp removes its auto-reload
-//                 entry automatically. Editing the pref applies live
-//                 (no restart). The script NEVER mutates
+//                 Config keys matching NO DEFINED panel are PRUNED - the
+//                 known set comes from the floorp.panelSidebar.data
+//                 registry, NOT from mounted browsers (panels mount
+//                 lazily; a mounted-only set is empty at boot and
+//                 pruning against it wiped the config on every restart).
+//                 Deleting a web panel in Floorp still removes its
+//                 auto-reload entry automatically. Editing the pref
+//                 applies live (no restart). The script NEVER mutates
 //                 floorp.panelSidebar.data itself.
 //                 Panels reload even when hidden by default; opt into
 //                 visible-only with { "minutes": N, "onlyWhenVisible": true }.
@@ -16,15 +20,21 @@
 //                 displayed panel is restored. Each configured panel's
 //                 sidebar icon shows a DEPLETING COUNTDOWN bar (starts at
 //                 100% after a reload, drains to 0% before the next).
-//                 Intervals are set PER PANEL via an "Auto-Reload"
-//                 submenu in the native web-panel right-click context
-//                 menu (#webpanel-context): presets
-//                 1/2/5/10/30/60/90 minutes + Disable. The menu's target
-//                 panel is resolved from the CONTEXTMENU EVENT PATH
-//                 (capture phase); Floorp's popup rebuild is suppressed
-//                 for our submenu's events; radio checkmark uses
-//                 attribute presence/removal (XUL quirk).
-// @version        2.1.0
+//                 Intervals are set PER PANEL via an "Auto-Reload…"
+//                 item in the native web-panel right-click context menu
+//                 (#webpanel-context): presets 1/2/5/10/30/60/90 minutes
+//                 + Disable. v2.3.0: the ladder is a STANDALONE popup of
+//                 our own (attached to the document root), opened by the
+//                 menu item's command - event-spy evidence showed Floorp
+//                 rebuilds #webpanel-context from a document-level
+//                 CAPTURE handler, which no suppression inside the popup
+//                 can preempt, so a nested submenu can never survive.
+//                 A standalone popup's events never traverse
+//                 #webpanel-context at all. The menu's target panel is
+//                 resolved from the CONTEXTMENU EVENT PATH (capture
+//                 phase); radio checkmark uses attribute
+//                 presence/removal (XUL quirk).
+// @version        2.3.0
 // @author         Conor
 // @license        MPL-2.0
 // @include        main
@@ -45,30 +55,40 @@
  *    { minutes, onlyWhenVisible, preload }. UUID keys only - there is no
  *    migration and no URL-substring matching; the context menu writes
  *    UUID keys, so the menu is the intended configuration path.
- *    - PRUNING: on every rebuild, config keys that match no current
- *      panel UUID are deleted - deleting a web panel in Floorp now
- *      removes its auto-reload entry automatically.
- *  - CONTEXT MENU UI: "Auto-Reload" submenu in #webpanel-context with the
- *    Vivaldi preset ladder (1/2/5/10/30/60/90 minutes) plus Disable.
- *    - POPUP REBUILD DEFENCE: XUL popupshowing BUBBLES, so opening our
- *      submenu sends a popupshowing up to #webpanel-context, where
- *      Floorp's own handler rebuilds the popup and wipes injected items.
- *      A CAPTURE-phase listener stops propagation of popupshowing events
- *      whose target is inside our menu. Our logic handler only acts when
- *      the event target IS the parent popup. The menu is rebuilt on every
- *      parent open if missing (self-healing).
+ *    - PRUNING (fixed in 2.2.0): config keys matching no DEFINED panel
+ *      UUID are deleted. The defined set is read from
+ *      floorp.panelSidebar.data, NOT from mounted browsers: panels mount
+ *      lazily on first display, so at boot the mounted set is empty and
+ *      the old mounted-based prune deleted every key on the first
+ *      rebuild after a restart, then persisted the emptied pref. With
+ *      the registry as the source, pruning still fires only for
+ *      genuinely deleted panels, and is SKIPPED entirely if the
+ *      registry is unreadable or empty (fail-safe: never prune on
+ *      incomplete knowledge).
+ *  - CONTEXT MENU UI ("Auto-Reload…" + standalone ladder popup):
+ *    - WHY STANDALONE (v2.3.0): an event spy at document capture level
+ *      proved that #webpanel-context receives NO popup events during
+ *      the vanish sequence - Floorp rebuilds the popup from a
+ *      DOCUMENT-LEVEL CAPTURE handler (a popupshowing observed at
+ *      main-window), which runs before any suppression inside the popup
+ *      (element capture, bubble-phase boundaries) can act. Every nested
+ *      submenu placed inside #webpanel-context is therefore doomed: the
+ *      wipe is unreachable. Solution: the ladder lives in OUR OWN
+ *      menupopup, attached to the document root. Its events never
+ *      traverse #webpanel-context at all - the bug class is eliminated
+ *      rather than fought.
+ *    - FLOW: right-click resolves the target panel (event-path stash ->
+ *      triggerNode -> displayed panel); the "Auto-Reload…" menuitem
+ *      shows for web panels, hides for static ones. Clicking it hides
+ *      Floorp's popup and opens our ladder popup at the original
+ *      right-click position (screen coords stashed from the contextmenu
+ *      event). Choosing an interval writes floorptweaks.panelReload;
+ *      Disable deletes the entry (unset = no auto-reload).
  *    - RADIO CHECKMARKS: for type=radio XUL menuitems, setting
  *      checked="false" as an attribute is not reliably "unchecked" - the
  *      group can end up displaying the LAST member as checked. The sync
  *      SETS the checked attribute on the matching item and REMOVES it
  *      entirely from all others.
- *    - TARGET RESOLUTION: a capture-phase contextmenu listener walks the
- *      event's composed path for the nearest [data-panel-id] tile or
- *      browser.sidebar-panel-browser and stashes the UUID with a
- *      timestamp. The menu's popupshowing handler consumes the fresh
- *      stash (<5 s), then falls back to the triggerNode chain, then the
- *      displayed panel. If nothing resolves, the item hides (static
- *      panels).
  *  - STARTUP MOUNT VIA SIMULATED CLICKS: configured panels without a
  *    mounted browser are click-mounted through Floorp's own code path,
  *    then the previously displayed panel is restored. FALLBACK: synthetic
@@ -121,6 +141,7 @@
 
   const g        = window.gBrowser;
   const PREF     = "floorptweaks.panelReload";
+  const DATA_PREF = "floorp.panelSidebar.data"; // read-only for us
   const MIN_MS   = 30_000; // clamp: never reload faster than every 30 s
   const MOUNT_DELAY_MS = 4000; // let Floorp finish building the sidebar
   const BAR_UPDATE_MS = 500;   // progress bar refresh cadence
@@ -151,13 +172,43 @@
     Services.prefs.setStringPref(PREF, JSON.stringify(obj));
   };
 
-  // Remove config keys matching no current panel UUID (orphans left by
-  // deleted panels). Called on every rebuild.
-  const pruneOrphanKeys = (activeUuids) => {
+  // UUIDs of all DEFINED web panels, from floorp.panelSidebar.data -
+  // Floorp's own registry of defined panels (array entries with a UUID
+  // "id"; it has historically appeared as a plain array and as an
+  // object carrying a "data" array, so accept both shapes). Used as the
+  // prune set: a panel that is merely NOT YET MOUNTED (lazy mounting,
+  // before its first display) must never have its config key deleted.
+  // An unreadable or empty registry returns an empty set; callers MUST
+  // treat empty as "do not prune" (never prune on incomplete knowledge).
+  const definedPanelUuids = () => {
+    const out = new Set();
+    try {
+      const raw = Services.prefs.getStringPref(DATA_PREF, "");
+      if (!raw) return out;
+      const parsed = JSON.parse(raw);
+      const entries = Array.isArray(parsed) ? parsed
+        : Array.isArray(parsed?.data) ? parsed.data
+        : Object.values(parsed || {});
+      for (const entry of entries) {
+        if (entry && typeof entry.id === "string") {
+          out.add(entry.id.toLowerCase());
+        }
+      }
+    } catch (e) {
+      logErr("floorp.panelSidebar.data unreadable - pruning disabled:",
+        e.message || e);
+    }
+    return out;
+  };
+
+  // Remove config keys matching no DEFINED panel UUID (orphans left by
+  // deleted panels). Callers pass the DEFINED-panel set and skip the
+  // call entirely when it is empty.
+  const pruneOrphanKeys = (definedUuids) => {
     const raw = readRawConfig();
     let dirty = false;
     for (const key of Object.keys(raw)) {
-      if (!activeUuids.has(key.toLowerCase())) {
+      if (!definedUuids.has(key.toLowerCase())) {
         delete raw[key];
         dirty = true;
         log("Pruned orphaned config key", key);
@@ -427,18 +478,20 @@
 
   setInterval(updateBars, BAR_UPDATE_MS);
 
-  // ---------------- context menu: Auto-Reload submenu --------------------
+  // ------------- context menu: "Auto-Reload…" + standalone popup ---------
   const CTX_POPUP_ID = "webpanel-context";
-  const MENU_ID = "ft-reload-menu";
-  const MENU_LABEL = "Auto-Reload";
-  const SUB_ID  = "ft-reload-sub";
+  const ITEM_ID = "ft-reload-item";       // menuitem inside Floorp's popup
+  const ITEM_LABEL = "Auto-Reload…";
+  const LADDER_POPUP_ID = "ft-reload-ladder"; // OUR popup, document root
   const RADIO_GROUP = "ft-reload-group";
   const MENU_STYLE_ID = "ft-reload-menu-style";
 
-  // Target panel, captured from the contextmenu event path (capture
-  // phase), with a timestamp so a stale stash cannot bleed across opens.
+  // Target panel + click position, captured from the contextmenu event
+  // (capture phase) with a timestamp so a stale stash cannot bleed.
   let ctxUuid = null;
   let ctxCapturedAt = 0;
+  let ctxScreenX = 0;
+  let ctxScreenY = 0;
 
   // Walk an event's composed path for a web-panel target.
   const uuidFromEventPath = (event) => {
@@ -460,13 +513,16 @@
     return null;
   };
 
-  // Capture-phase listener: stash the target before the popup opens.
+  // Capture-phase listener: stash the target + position before the
+  // popup opens.
   const onGlobalContextMenu = (event) => {
     try {
       const resolved = uuidFromEventPath(event);
       if (resolved) {
         ctxUuid = resolved.uuid;
         ctxCapturedAt = Date.now();
+        ctxScreenX = event.screenX || 0;
+        ctxScreenY = event.screenY || 0;
         log("Context event target:", ctxUuid, `(via ${resolved.via})`);
       } else {
         // No panel target in the path - invalidate any stash.
@@ -503,67 +559,18 @@
     writeRawConfig(raw);
   };
 
-  // The panel the currently open menu is targeting, kept between
-  // popupshowing and the item command handlers.
+  // The panel the currently open context menu is targeting, kept between
+  // popupshowing and the ladder item command handlers.
   let ctxMenuTarget = null;
-
-  // Build (or rebuild) the submenu and insert it into the popup.
-  const buildAndInsertMenu = () => {
-    const popup = document.getElementById(CTX_POPUP_ID);
-    if (!popup) return;
-    document.getElementById(MENU_ID)?.remove();
-
-    const menu = document.createXULElement("menu");
-    menu.id = MENU_ID;
-    menu.setAttribute("label", MENU_LABEL);
-
-    const sub = document.createXULElement("menupopup");
-    sub.id = SUB_ID;
-
-    for (const m of LADDER) {
-      const item = document.createXULElement("menuitem");
-      item.setAttribute("type", "radio");
-      item.setAttribute("name", RADIO_GROUP);
-      item.setAttribute("label", `${m} Minute${m > 1 ? "s" : ""}`);
-      item.setAttribute("ft-minutes", String(m));
-      item.addEventListener("command", () => {
-        if (ctxMenuTarget) setIntervalForUuid(ctxMenuTarget, m);
-      });
-      sub.appendChild(item);
-    }
-
-    // Separator, then Disable (Vivaldi's layout).
-    sub.appendChild(document.createXULElement("menuseparator"));
-    const off = document.createXULElement("menuitem");
-    off.setAttribute("type", "radio");
-    off.setAttribute("name", RADIO_GROUP);
-    off.setAttribute("label", "Disable");
-    off.setAttribute("ft-minutes", "0");
-    off.addEventListener("command", () => {
-      if (ctxMenuTarget) setIntervalForUuid(ctxMenuTarget, 0);
-    });
-    sub.appendChild(off);
-
-    menu.appendChild(sub);
-
-    // Place after Floorp's unload item, before its trailing separator.
-    const first = popup.firstElementChild;
-    if (first) {
-      popup.insertBefore(menu, first.nextElementSibling || null);
-    } else {
-      popup.appendChild(menu);
-    }
-    log("Auto-Reload submenu (re-)injected into #webpanel-context");
-  };
 
   // Sync the radio checkmark. IMPORTANT (XUL quirk): for type=radio
   // menuitems, checked="false" is not reliably "unchecked" - the group
   // can end up displaying the LAST member as checked. Set the attribute
   // only on the match; REMOVE it from everything else.
   const syncRadioChecked = (minutes) => {
-    const sub = document.getElementById(SUB_ID);
-    if (!sub) return;
-    for (const item of sub.querySelectorAll("menuitem[ft-minutes]")) {
+    const ladder = document.getElementById(LADDER_POPUP_ID);
+    if (!ladder) return;
+    for (const item of ladder.querySelectorAll("menuitem[ft-minutes]")) {
       const itemMinutes = Number(item.getAttribute("ft-minutes"));
       if (itemMinutes === minutes) {
         item.setAttribute("checked", "true");
@@ -573,20 +580,103 @@
     }
   };
 
+  // Build (or rebuild) the "Auto-Reload…" item inside Floorp's popup.
+  const buildAndInsertMenuItem = () => {
+    const popup = document.getElementById(CTX_POPUP_ID);
+    if (!popup) return;
+    document.getElementById(ITEM_ID)?.remove();
+
+    const item = document.createXULElement("menuitem");
+    item.id = ITEM_ID;
+    item.setAttribute("label", ITEM_LABEL);
+    item.addEventListener("command", () => {
+      if (!ctxMenuTarget) return;
+      // Close Floorp's popup, then open OUR ladder popup at the original
+      // right-click position. Our popup is attached to the document
+      // root, so none of its events traverse #webpanel-context.
+      try {
+        popup.hidePopup();
+      } catch (e) { /* already closing */ }
+      openLadderPopup();
+    });
+
+    // Place after Floorp's unload item, before its trailing separator.
+    const first = popup.firstElementChild;
+    if (first) {
+      popup.insertBefore(item, first.nextElementSibling || null);
+    } else {
+      popup.appendChild(item);
+    }
+    log("Auto-Reload menu item (re-)injected into #webpanel-context");
+  };
+
+  // Build our standalone ladder popup once. Attached to the document
+  // ROOT - deliberately NOT inside #webpanel-context (see v2.3.0 note).
+  const buildLadderPopup = () => {
+    let ladder = document.getElementById(LADDER_POPUP_ID);
+    if (ladder) ladder.remove();
+
+    ladder = document.createXULElement("menupopup");
+    ladder.id = LADDER_POPUP_ID;
+
+    for (const m of LADDER) {
+      const mi = document.createXULElement("menuitem");
+      mi.setAttribute("type", "radio");
+      mi.setAttribute("name", RADIO_GROUP);
+      mi.setAttribute("label", `${m} Minute${m > 1 ? "s" : ""}`);
+      mi.setAttribute("ft-minutes", String(m));
+      mi.addEventListener("command", () => {
+        if (ctxMenuTarget) setIntervalForUuid(ctxMenuTarget, m);
+      });
+      ladder.appendChild(mi);
+    }
+
+    // Separator, then Disable (Vivaldi's layout).
+    ladder.appendChild(document.createXULElement("menuseparator"));
+    const off = document.createXULElement("menuitem");
+    off.setAttribute("type", "radio");
+    off.setAttribute("name", RADIO_GROUP);
+    off.setAttribute("label", "Disable");
+    off.setAttribute("ft-minutes", "0");
+    off.addEventListener("command", () => {
+      if (ctxMenuTarget) setIntervalForUuid(ctxMenuTarget, 0);
+    });
+    ladder.appendChild(off);
+
+    document.documentElement.appendChild(ladder);
+    log("Ladder popup created (standalone, at document root)");
+  };
+
+  // Open our ladder popup at the stashed right-click position.
+  const openLadderPopup = () => {
+    const ladder = document.getElementById(LADDER_POPUP_ID);
+    if (!ladder || !ctxMenuTarget) return;
+    syncRadioChecked(
+      Number.isFinite(entryMinutes(ctxMenuTarget))
+        ? entryMinutes(ctxMenuTarget) : 0);
+    try {
+      ladder.openPopupAtScreen(ctxScreenX, ctxScreenY, false);
+    } catch (e) {
+      logErr("openPopupAtScreen failed - centred fallback:", e);
+      try { ladder.openPopupAtScreen(-1, -1, false); } catch (e2) {}
+    }
+  };
+
   const onCtxShowing = (event) => {
     const popup = document.getElementById(CTX_POPUP_ID);
     if (!popup || !event) return;
 
-    // Only react to the PARENT popup opening - bubbled popupshowing from
-    // our submenu (or Floorp's own children) must not re-run targeting.
+    // Only react to the PARENT popup opening - bubbled events from
+    // Floorp's own children must not re-run targeting.
     if (event.target !== popup) return;
 
-    // Self-healing: if something wiped our menu, rebuild it before the
+    // Self-healing: if something wiped our item, rebuild it before the
     // popup is displayed.
-    if (!document.getElementById(MENU_ID)) buildAndInsertMenu();
+    if (!document.getElementById(ITEM_ID)) buildAndInsertMenuItem();
+    if (!document.getElementById(LADDER_POPUP_ID)) buildLadderPopup();
 
-    const menu = document.getElementById(MENU_ID);
-    if (!menu) return;
+    const item = document.getElementById(ITEM_ID);
+    if (!item) return;
 
     // 1) Fresh event-path stash FIRST.
     let resolved = null;
@@ -622,35 +712,12 @@
 
     if (!resolved?.uuid) {
       // No web-panel target (e.g. a static panel) - hide our item.
-      menu.setAttribute("hidden", "true");
+      item.setAttribute("hidden", "true");
       ctxMenuTarget = null;
       return;
     }
     ctxMenuTarget = resolved.uuid;
-    menu.removeAttribute("hidden");
-
-    // Reflect current state in the radio group (presence/removal, see
-    // syncRadioChecked comment).
-    const minutes = entryMinutes(ctxMenuTarget);
-    syncRadioChecked(Number.isFinite(minutes) ? minutes : 0);
-  };
-
-  // Intercept (capture-phase, runs before Floorp's bubble listeners)
-  // popupshowing events that originate INSIDE our submenu: opening the
-  // submenu must not trigger Floorp's popup rebuild, which wipes our
-  // injected menu mid-hover.
-  const guardSubmenuEvents = () => {
-    const popup = document.getElementById(CTX_POPUP_ID);
-    if (!popup) return;
-    popup.addEventListener("popupshowing", (e) => {
-      const t = e.target;
-      if (t && (t.id === SUB_ID ||
-          (t.closest && t.closest(`#${MENU_ID}`)))) {
-        e.stopImmediatePropagation();
-        e.stopPropagation();
-        log("Suppressed rebuild for our submenu popupshowing");
-      }
-    }, true);
+    item.removeAttribute("hidden");
   };
 
   const ensureMenuStyles = () => {
@@ -658,19 +725,19 @@
     const style = document.createXULElement("style");
     style.id = MENU_STYLE_ID;
     style.textContent = `
-      #${MENU_ID}[hidden] { display: none; }`;
+      #${ITEM_ID}[hidden] { display: none; }`;
     document.documentElement.appendChild(style);
   };
 
   const ensureContextItems = () => {
     const popup = document.getElementById(CTX_POPUP_ID);
     if (!popup) return;
-    if (!document.getElementById(MENU_ID)) buildAndInsertMenu();
+    if (!document.getElementById(ITEM_ID)) buildAndInsertMenuItem();
+    if (!document.getElementById(LADDER_POPUP_ID)) buildLadderPopup();
     // Wire handlers once (idempotent via a flag attribute).
     if (!popup.hasAttribute("ft-reload-wired")) {
       popup.setAttribute("ft-reload-wired", "true");
       popup.addEventListener("popupshowing", onCtxShowing);
-      guardSubmenuEvents();
       log("Popup handlers wired for #webpanel-context");
     }
   };
@@ -750,9 +817,16 @@
         .sort()
         .join("|");
 
-      // Prune config keys for panels that no longer exist (deleted
-      // web panels leave orphans otherwise).
-      pruneOrphanKeys(new Set(desired.map((d) => d.uuid)));
+      // Prune config keys for panels that no longer EXIST (deleted web
+      // panels leave orphans otherwise). FIXED in v2.2.0: the known set
+      // comes from the DEFINED panel registry (floorp.panelSidebar.data),
+      // NOT from mounted browsers. Panels mount lazily on first display,
+      // so a mounted-only set is EMPTY at boot and pruning against it
+      // deleted every config key on the first rebuild after a restart,
+      // then persisted the emptied pref. Empty registry => skip pruning
+      // entirely (never prune on incomplete knowledge).
+      const defined = definedPanelUuids();
+      if (defined.size) pruneOrphanKeys(defined);
 
       if (sig === lastTimerSig) {
         // Nothing relevant changed - DO NOT touch timers or nextFire.
