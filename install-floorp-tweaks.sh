@@ -10,7 +10,17 @@
 #        profile/  -> chrome/JS, chrome/resources, chrome/utils
 #                    into the chosen Floorp profile folder
 #   2. Floorp-Tweaks (thefella/Floorp-Tweaks):
-#        Scripts/*.uc.js            -> <profile>/chrome/JS/
+#        Scripts/floorp-tweaks-loader.uc.js -> <profile>/chrome/JS/
+#            (the ONLY auto-loaded script; it enumerates and loads
+#            everything in the subfolder below at startup)
+#        Scripts/floorp-tweaks/*.uc.js      -> <profile>/chrome/JS/floorp-tweaks/
+#            (suite scripts; NOT auto-loaded by fx-autoconfig - the
+#            loader subloads them via chrome://userscripts/content/)
+#            The subfolder is refreshed wholesale, so stale copies of
+#            renamed/retired scripts are removed on every install.
+#        Any legacy flat-installed floorp-tweaks-*.uc.js from earlier
+#        installer versions is REMOVED from chrome/JS/ (they would
+#        otherwise be auto-loaded AND subloaded - double registration).
 #        CSS/floorp-tweaks.css      -> <profile>/chrome/CSS/
 #        CSS/floorp-tweaks/*.css    -> <profile>/chrome/CSS/floorp-tweaks/
 #        and appends ONE @import line for floorp-tweaks.css into
@@ -40,8 +50,10 @@ FX_RAW_REPO="MrOtherGuy/fx-autoconfig"
 FX_BRANCH="master"
 TWEAKS_REPO="thefella/Floorp-Tweaks"
 TWEAKS_BRANCH="main"
-TWEAKS_CSS="floorp-tweaks.css"          # single entry-point stylesheet
-TWEAKS_CSS_DIR="floorp-tweaks"          # folder it imports from
+TWEAKS_LOADER="floorp-tweaks-loader.uc.js"   # single auto-loaded script
+TWEAKS_JS_DIR="floorp-tweaks"                # subfolder the loader reads
+TWEAKS_CSS="floorp-tweaks.css"               # single entry-point stylesheet
+TWEAKS_CSS_DIR="floorp-tweaks"               # folder it imports from
 DATA_DIR="$HOME/Library/Application Support/Floorp"
 PROFILES_INI="$DATA_DIR/profiles.ini"
 
@@ -176,17 +188,42 @@ done
 echo "== Installing Floorp-Tweaks =="
 mkdir -p "$CHROME_DIR/JS" "$CHROME_DIR/CSS"
 
-# 3a. Scripts -> chrome/JS/
+# 3a. Legacy cleanup: remove flat-installed suite scripts from earlier
+#     installer versions. They must not remain: top-level .uc.js files
+#     are AUTO-loaded by fx-autoconfig, and the loader ALSO subloads
+#     the subfolder copy - double registration.
 shopt -s nullglob
-scripts=("$TW_SRC"/Scripts/*.uc.js)
+legacy=( "$CHROME_DIR/JS"/floorp-tweaks-*.uc.js )
 shopt -u nullglob
-for f in "${scripts[@]:-}"; do
+for f in "${legacy[@]:-}"; do
     [[ -z "$f" ]] && continue
-    cp "$f" "$CHROME_DIR/JS/"
-    echo "  chrome/JS/$(basename "$f")"
+    rm -f "$f"
+    echo "  removed legacy chrome/JS/$(basename "$f") (now in subfolder)"
 done
 
-# 3b. Single entry-point stylesheet + imported folder -> chrome/CSS/
+# 3b. Loader (the ONLY auto-loaded script) -> chrome/JS/
+TW_LOADER_SRC="$TW_SRC/Scripts/$TWEAKS_LOADER"
+if [[ ! -f "$TW_LOADER_SRC" ]]; then
+    echo "  ERROR: $TWEAKS_REPO@$TWEAKS_BRANCH does not contain Scripts/$TWEAKS_LOADER."
+    echo "         Was the repo restructured, or is the change not pushed yet?"
+    exit 1
+fi
+cp "$TW_LOADER_SRC" "$CHROME_DIR/JS/"
+echo "  chrome/JS/$TWEAKS_LOADER"
+
+# 3c. Suite scripts -> chrome/JS/floorp-tweaks/ (refreshed wholesale,
+#     so renamed/retired files disappear on every install).
+TW_JSDIR_SRC="$TW_SRC/Scripts/$TWEAKS_JS_DIR"
+if [[ ! -d "$TW_JSDIR_SRC" ]]; then
+    echo "  ERROR: Scripts/$TWEAKS_JS_DIR/ folder not found in $TWEAKS_REPO@$TWEAKS_BRANCH."
+    exit 1
+fi
+rm -rf "$CHROME_DIR/JS/$TWEAKS_JS_DIR"
+mkdir -p "$CHROME_DIR/JS/$TWEAKS_JS_DIR"
+cp -R "$TW_JSDIR_SRC/." "$CHROME_DIR/JS/$TWEAKS_JS_DIR/"
+echo "  chrome/JS/$TWEAKS_JS_DIR/  ($(find "$CHROME_DIR/JS/$TWEAKS_JS_DIR" -type f | wc -l | tr -d ' ') files)"
+
+# 3d. Single entry-point stylesheet + imported folder -> chrome/CSS/
 TW_CSS_SRC="$TW_SRC/CSS/$TWEAKS_CSS"
 TW_CSSDIR_SRC="$TW_SRC/CSS/$TWEAKS_CSS_DIR"
 if [[ ! -f "$TW_CSS_SRC" ]]; then
@@ -206,7 +243,7 @@ mkdir -p "$CHROME_DIR/CSS/$TWEAKS_CSS_DIR"
 cp -R "$TW_CSSDIR_SRC/." "$CHROME_DIR/CSS/$TWEAKS_CSS_DIR/"
 echo "  chrome/CSS/$TWEAKS_CSS_DIR/  ($(find "$CHROME_DIR/CSS/$TWEAKS_CSS_DIR" -type f | wc -l | tr -d ' ') files)"
 
-# 3c. Register the single @import in userChrome.css (idempotent),
+# 3e. Register the single @import in userChrome.css (idempotent),
 #     and strip legacy per-file imports from older installer versions.
 UC="$CHROME_DIR/userChrome.css"
 [[ -f "$UC" ]] || touch "$UC"
@@ -236,7 +273,9 @@ Done. Remaining manual steps:
   2. Clear the startup cache: about:support -> "Clear startup cache..."
      and let Floorp restart.
   3. Verify in the Browser Console (Cmd+Shift+J) that fx-autoconfig's
-     banner appears and your scripts' debug output shows up.
+     banner appears and the [Floorp-Tweaks][Loader] lines report every
+     suite script loaded (one "loaded <name>" line per file, then a
+     "suite loaded: N script(s)" summary).
 
 Remember: app-side files (config.js) are wiped by Floorp updates - re-run
 this script after every Floorp update.
