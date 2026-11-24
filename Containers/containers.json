@@ -54,6 +54,20 @@
             "name": "Microsoft"
         },
         {
+            "userContextId": 14,
+            "public": true,
+            "icon": "fingerprint",
+            "color": "pink",
+            "name": "Finance / Gov"
+        },
+        {
+            "userContextId": 15,
+            "public": true,
+            "icon": "food",
+            "color": "cyan",
+            "name": "Retail"
+        },
+        {
             "userContextId": 13,
             "public": true,
             "icon": "chill",
@@ -244,6 +258,10 @@
         "airport.com": 12,
         "applecare.com": 12,
         "next.com": 12,
-        "beatsbydre.com": 12
+        "beatsbydre.com": 12,
+        "gov.uk": 14,
+        "monzo.com": 14,
+        "starlingbank.com": 14,
+        "ebay.co.uk": 15
     }
 }
