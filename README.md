@@ -4,6 +4,14 @@
 
 Fixes for the things that bug me about Floorp: workspace-aware pinned tabs, cleaner chrome, container presets.
 
+- Workspace-aware pinned tabs.
+- Synced backup for workspaces and pinned tabs.
+- Auto-delete history after a set amount of time.
+- Auto-reloading Sidebar web panels.
+- RAM and CPU usage on tab hover.
+- Cleaner browser chrome — password icon removed, more obvious unloaded tabs.
+- Optional container presets.
+
 | | |
 |---|---|
 | **Platform** | macOS (manual steps work on any OS) |
