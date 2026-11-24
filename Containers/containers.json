@@ -68,6 +68,13 @@
             "name": "Retail"
         },
         {
+            "userContextId": 16,
+            "public": true,
+            "icon": "pet",
+            "color": "violet",
+            "name": "Social"
+        },
+        {
             "userContextId": 13,
             "public": true,
             "icon": "chill",
@@ -262,6 +269,7 @@
         "gov.uk": 14,
         "monzo.com": 14,
         "starlingbank.com": 14,
-        "ebay.co.uk": 15
+        "ebay.co.uk": 15,
+        "x.com": 16
     }
 }
