@@ -2,7 +2,7 @@
 
 **Quality-of-life userChrome tweaks for the [Floorp](https://floorp.ablaze.one) browser** — a Firefox fork.
 
-Fixes for the things that bug me about Floorp: workspace-aware pinned tabs, cleaner chrome, container presets.
+Some of the changes and features:
 
 - Workspace-aware pinned tabs.
 - Synced backup for workspaces and pinned tabs.
@@ -11,6 +11,7 @@ Fixes for the things that bug me about Floorp: workspace-aware pinned tabs, clea
 - RAM and CPU usage on tab hover.
 - Cleaner browser chrome — password icon removed, more obvious unloaded tabs.
 - Optional container presets.
+
 
 | | |
 |---|---|
