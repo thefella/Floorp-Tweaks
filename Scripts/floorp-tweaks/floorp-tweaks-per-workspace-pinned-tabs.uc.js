@@ -16,7 +16,14 @@
 //                 TabClose time and defends it for a short window, so the
 //                 select-sync can no longer chase Firefox's post-close
 //                 pick into a foreign workspace before the correction runs.
-// @version        5.3.1
+//                 v5.4.0: pinned-tab drag reordering no longer fights the
+//                 updater. The moveTabTo compaction is skipped while a drag
+//                 is active (dragActive attribute in vertical layouts, drag
+//                 events in horizontal ones) and for a short settle window
+//                 afterwards, and it now only runs when front-contiguity is
+//                 actually violated - in current DOM order, so the user's
+//                 drag order sticks instead of being snapped back.
+// @version        5.4.0
 // @author         Conor - https://github.com/thefella/Floorp-Tweaks
 // @license        MPL-2.0
 // @include        main
@@ -29,10 +36,23 @@
  *
  *  - PIN STATE IS NEVER MUTATED. All pinned tabs stay pinned. Foreign-
  *    workspace pins get `pwpt-workspace-hidden` and are hidden by CSS;
- *    the current workspace's pins are moved to the front of the strip.
+ *    the current workspace's pins are kept at the front of the strip.
  *  - The updater is IDEMPOTENT and re-runs on every tab-list mutation
  *    (MutationObserver on #tabbrowser-arrowscrollbox). A wrong state after
  *    a race is corrected by the very next DOM change.
+ *  - ORDERING (v5.4.0): classification (attribute work) NEVER reorders.
+ *    Reordering happens only as a REPAIR, and only when an own pin sits
+ *    behind a foreign pin in the strip (front-contiguity violated). The
+ *    repair compacts own pins to the front IN CURRENT DOM ORDER, so it
+ *    preserves - rather than discards - the user's drag arrangement.
+ *  - DRAG SAFETY (v5.4.0): while a pinned-tab drag is active, the repair
+ *    is suspended entirely so Floorp's own drag code owns the strip.
+ *    Vertical layouts report the drag via the `dragActive` attribute on
+ *    #pinned-tabs-container; horizontal layouts have no such attribute,
+ *    so dragstart/dragend/drop/mouseup listeners fill the gap. After the
+ *    drag ends, a 150 ms settle window lets the drop land before the next
+ *    repair-capable pass, and the drop position is never snapped back
+ *    because the repair only triggers on genuine contiguity violations.
  *  - MODULE DISCOVERY: Floorp's internal workspaces module lives at
  *    chrome://noraneko/content/assets/js/indexNN.js, where NN moves with
  *    each Floorp release. The version ladder below provides the expected
@@ -55,9 +75,9 @@
  *    armed - otherwise it would switch Floorp to the foreign workspace
  *    Firefox briefly picked, before the correction could run.
  *
- * LOGGING: all console output is tagged "[Floorp-Tweaks]". Messages are
- * printed only when DEBUG is true; flip it and watch the Browser Console
- * (Ctrl+Shift+J) to troubleshoot.
+ * LOGGING: all console output is tagged "[Floorp-Tweaks][WSPins]". Messages
+ * are printed only when DEBUG is true; flip it and watch the Browser
+ * Console (Ctrl+Shift+J) to troubleshoot.
  *
  * REQUIRED CSS in userChrome.css:
  *
@@ -68,7 +88,7 @@
   if (!window.gBrowser || window.__pwptLoaded) return;
   window.__pwptLoaded = true;
 
-  const LOG_TAG = "[Floorp-Tweaks]";
+  const LOG_TAG = "[Floorp-Tweaks][WSPins]";
   const DEBUG   = false;
   const log     = (...a) => { if (DEBUG) console.log(LOG_TAG, ...a); };
   const logErr  = (...a) => { if (DEBUG) console.error(LOG_TAG, ...a); };
@@ -323,13 +343,50 @@
     if (splitter)  splitter.toggleAttribute("hidden", !anyVisible);
   };
 
-  // Pure classification - safe to run as often as it is called.
-  const updatePinnedTabs = (dragActive = false) => {
+  // -------------------- drag state (v5.4.0) --------------------------------
+  // Vertical-tabs layouts expose a `dragActive` attribute on
+  // #pinned-tabs-container; horizontal layouts do not, so manual drag
+  // listeners fill the gap. While a drag is busy, the updater classifies
+  // but NEVER reorders; after it ends, a short settle window lets the
+  // drop land before any repair-capable pass.
+  const SETTLE_MS = 150;
+
+  let manualDrag  = false; // set by dragstart on a tab element
+  let settleUntil = 0;     // before this timestamp, reordering is suspended
+  let settleTimer = null;
+
+  const scheduleSettlePass = () => {
+    settleUntil = Date.now() + SETTLE_MS;
+    if (settleTimer) clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      settleTimer = null;
+      updatePinnedTabs(false);
+    }, SETTLE_MS + 10);
+  };
+
+  const isTabElement = (e) => {
+    const t = e.target;
+    if (!t || t.nodeType !== Node.ELEMENT_NODE) return false;
+    return t.tagName === "tab" || !!t.closest?.("tab");
+  };
+
+  const endManualDrag = () => {
+    if (!manualDrag) return;
+    manualDrag = false;
+    scheduleSettlePass();
+  };
+
+  // Forward declaration; defined below and used by the settle pass.
+  let updatePinnedTabs;
+
+  // Pure classification + conditional repair - safe to run as often as it
+  // is called, and it never fights a drag in progress.
+  updatePinnedTabs = (duringDrag = false) => {
     const ws  = wrapper.currentWS();
     const def = wrapper.defaultWS();
-    let shown = 0;
     let changed = false;
 
+    // Pass 1: classification. Attributes only - this never reorders.
     for (const tab of g.tabs) {
       if (!tab.pinned) continue;
       const tws = tab.getAttribute("floorpWorkspaceId") ?? def;
@@ -342,10 +399,6 @@
           tab.removeAttribute("hidden");
           changed = true;
         }
-        // Own pins to the front of the strip, in current order.
-        try {
-          g.moveTabTo(tab, { elementIndex: shown++ });
-        } catch (e) { shown++; }
       } else {
         if (!tab.hasAttribute(hiddenAttr)) {
           tab.setAttribute(hiddenAttr, "");
@@ -353,7 +406,7 @@
         }
         // During pinned-tab drags, hide for real so Floorp's drag code
         // does not fight the strip (Natsumi's workaround).
-        if (dragActive) {
+        if (duringDrag || manualDrag) {
           if (!tab.hasAttribute("hidden")) {
             tab.setAttribute("hidden", "true");
             changed = true;
@@ -362,6 +415,41 @@
           tab.removeAttribute("hidden");
           changed = true;
         }
+      }
+    }
+
+    // Pass 2: repair front-contiguity, only when it is actually violated
+    // and no drag is busy or settling. The compaction walks the strip in
+    // CURRENT DOM order, so a drag-arranged order is preserved; if the
+    // invariant already holds (the normal case after a drop inside the
+    // own-pin block), nothing moves at all.
+    const dragBusy = duringDrag || manualDrag || Date.now() < settleUntil;
+    if (!dragBusy) {
+      let foreignSeen = false;
+      let needsRepair = false;
+      for (const tab of g.tabs) {
+        if (!tab.pinned) continue;
+        const tws = tab.getAttribute("floorpWorkspaceId") ?? def;
+        if (tws === ws) {
+          if (foreignSeen) { needsRepair = true; break; }
+        } else {
+          foreignSeen = true;
+        }
+      }
+      if (needsRepair) {
+        let shown = 0;
+        for (const tab of g.tabs) {
+          if (!tab.pinned) continue;
+          const tws = tab.getAttribute("floorpWorkspaceId") ?? def;
+          if (tws === ws) {
+            // Own pins to the front of the strip, in current order.
+            try {
+              g.moveTabTo(tab, { elementIndex: shown++ });
+            } catch (e) { shown++; }
+          }
+        }
+        changed = true;
+        log("Repaired own-pin front contiguity in workspace", ws);
       }
     }
 
@@ -384,12 +472,24 @@
       log("#tabbrowser-arrowscrollbox not found - observers not attached");
     }
 
+    // Manual drag detection: covers horizontal layouts (which have no
+    // dragActive attribute) and any tab element in any layout. mouseup is
+    // a belt-and-braces end signal in case dragend is swallowed.
+    document.addEventListener("dragstart", (event) => {
+      if (isTabElement(event)) manualDrag = true;
+    }, true);
+    document.addEventListener("dragend", endManualDrag, true);
+    document.addEventListener("drop", endManualDrag, true);
+    document.addEventListener("mouseup", endManualDrag, true);
+
     // Drag handling: observe dragActive on the pinned container (vertical
     // tabs layouts only; harmless if absent).
     const pinnedContainer = document.getElementById("pinned-tabs-container");
     if (pinnedContainer) {
       new MutationObserver(() => {
-        updatePinnedTabs(pinnedContainer.hasAttribute("dragActive"));
+        const active = pinnedContainer.hasAttribute("dragActive");
+        if (!active) scheduleSettlePass(); // arm BEFORE the next pass runs
+        updatePinnedTabs(active);
       }).observe(pinnedContainer, { attributes: true, attributeFilter: ["dragActive"] });
 
       new MutationObserver(() => setStripVisibility())

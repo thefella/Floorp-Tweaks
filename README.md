@@ -9,7 +9,7 @@ Some of the changes and features:
 - Auto-delete history after a set amount of time.
 - Auto-reloading Sidebar web panels.
 - RAM and CPU usage on tab hover.
-- Cleaner browser chrome — password icon removed, more obvious unloaded tabs.
+- Cleaner browser chrome — password icon removed, more obvious unloaded tabs, no clicking on tab audio indicator.
 - Optional container presets.
 
 
