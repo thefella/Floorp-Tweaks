@@ -176,7 +176,7 @@
       const store = readJson(STORE_PREF, null);
       if (!store || !Array.isArray(store.data) || !store.data.length) {
         prompt.alert(window, "Workspaces Backup",
-          "No workspace store found - nothing to snapshot.");
+          "No workspace store found - nothing to backup.");
         return;
       }
 
@@ -211,15 +211,13 @@
       writeJson(BACKUP_PREF, backup);
 
       prompt.alert(window, "Workspaces Backup",
-        `Backup written to ${BACKUP_PREF}\n\n` +
+        `Workspaces and pinned tabs are now backed up!\n\n` +
         `Workspaces: ${store.data.length}\n` +
-        `Pinned tabs: ${pins.length}` +
+        `Pinned Tabs: ${pins.length}` +
         (unreadable ? `\nUnreadable pins (SKIPPED): ${unreadable}` : ``) +
-        `\nTimestamp: ${fmtTs(backup.ts)}\n\n` +
-        `Transport option: add\n` +
-        `services.sync.prefs.sync.${BACKUP_PREF} = true\n` +
-        `to about:config on both machines and the backup travels with ` +
-        `Firefox Sync - restore stays a manual button press.`);
+        `\nTime: ${fmtTs(backup.ts)}\n\n` +
+        `Add this to about:config if you haven't already:\n` +
+        `services.sync.prefs.sync.${BACKUP_PREF} = true\n`);
       log("Backup written:", store.data.length, "workspaces,",
           pins.length, "pins,", unreadable, "unreadable");
     } catch (e) {
@@ -244,21 +242,37 @@
       const currentCount = current?.data?.length || 0;
       const replaceMode = currentCount === 0;
 
+
       const ok = prompt.confirm(window, "Workspaces Restore",
-        `Restore from backup ${fmtTs(backup.ts)} ` +
-        `(${backup.device || "?"})?\n\n` +
-        `Workspaces in backup: ${backup.store.data.length}\n` +
-        `Workspaces on this machine: ${currentCount}\n` +
-        (replaceMode
-          ? `This machine has none - the backup store will be written ` +
-            `VERBATIM.\n`
-          : `Missing workspaces will be MERGED in by UUID; existing ` +
-            `local workspaces are kept.\n`) +
-        `Pinned tabs in backup: ${backup.pins?.length || 0}\n` +
-        `Already-pinned URLs will be skipped.\n\n` +
-        `If Floorp does not recognise a restored workspace until it ` +
-        `restarts, run restore AGAIN after restarting.\n\nProceed?`);
-      if (!ok) { log("Restore cancelled"); return; }
+      `Restore from backup ${fmtTs(backup.ts)} ` +
+      `\n(${backup.device || "?"})?\n\n` +
+      `Workspaces in backup: ${backup.store.data.length}\n` +
+      `Pinned tabs in backup: ${backup.pins?.length || 0}\n` +
+      `(Already-pinned URLs will be skipped).\n\n` +
+      (replaceMode
+        ? `This browser has no workspaces - the backup will be written ` +
+          `VERBATIM.\n`
+        : `Any missing workspaces will be MERGED; existing ` +
+          `local workspaces (${currentCount}) are kept.\n`) +
+      `\n` +
+      `If Floorp does not recognise a restored workspace until it ` +
+      `restarts, run restore AGAIN after restarting.\n\nProceed?`);
+
+      // const ok = prompt.confirm(window, "Workspaces Restore",
+      //   `Restore from backup ${fmtTs(backup.ts)} ` +
+      //   `(${backup.device || "?"})?\n\n` +
+      //   `Workspaces in backup: ${backup.store.data.length}\n` +
+      //   `Workspaces on this machine: ${currentCount}\n` +
+      //   (replaceMode
+      //     ? `This machine has none - the backup store will be written ` +
+      //       `VERBATIM.\n`
+      //     : `Missing workspaces will be MERGED; existing ` +
+      //       `local workspaces are kept.\n`) +
+      //   `Pinned tabs in backup: ${backup.pins?.length || 0}\n` +
+      //   `Already-pinned URLs will be skipped.\n\n` +
+      //   `If Floorp does not recognise a restored workspace until it ` +
+      //   `restarts, run restore AGAIN after restarting.\n\nProceed?`);
+      if (!ok) { log("Restore cancelled."); return; }
 
       // -------- 1) write/merge the v4 store --------
       const merged = replaceMode

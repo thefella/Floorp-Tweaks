@@ -100,7 +100,7 @@
     { section: "tweaks",
       pref: "floorptweaks.audioIndicatorButton.disabled",
       label: "Disable clicking on mute tab icon",
-      desc:  "Stops accidental muting when clicking a tab's audio indicator.",
+      desc:  "Stops accidental muting when clicking a tab with audio.",
       def:   true },
     { section: "tweaks",
       pref: "floorptweaks.obviousUnloadedTabs",
@@ -111,8 +111,7 @@
       kind: "int",
       pref: "floorptweaks.history.retention",
       label: "Browsing history duration",
-      desc:  "Automatically delete browsing history older than the " +
-             "selected period.",
+      desc:  "Automatically delete browsing history.",
       def:   -1,
       options: [
         { value: 0,   label: "Session Only" },
@@ -213,9 +212,9 @@
       const b = JSON.parse(raw);
       const wsCount  = b.store?.data?.length ?? "?";
       const pinCount = b.pins?.length ?? "?";
-      return "Snapshot from " + fmtBackupTime(b.ts) +
-             " (" + (b.device || "?") + "): " +
-             wsCount + " workspaces, " + pinCount + " pins.";
+      return "Last backup: " + fmtBackupTime(b.ts) +
+             " (" + (b.device || "?") + ")" + " - " +
+             wsCount + " workspaces and " + pinCount + " tabs.";
     } catch (e) {
       return "Backup pref present, but unreadable.";
     }
@@ -264,11 +263,11 @@
 
     // Blurb.
     const blurb = doc.createElementNS(HTML_NS, "div");
-    blurb.textContent =
-      "Manual backup/restore of workspaces and pinned tabs. Backup " +
-      "absorbs the workspace store and all pins into " + BACKUP_PREF +
-      "; restore writes them back and re-pins the tabs. Restore is " +
-      "confirm-guarded and may need a second run after a restart.";
+    blurb.textContent = "Backup / restore your workspaces and pinned tabs.";
+      // "Manual backup/restore of workspaces and pinned tabs. Backup " +
+      // "absorbs the workspace store and all pins into " + BACKUP_PREF +
+      // "; restore writes them back and re-pins the tabs. Restore is " +
+      // "confirm-guarded and may need a second run after a restart.";
     blurb.style.cssText =
       "color: var(--in-content-deemphasized-text, gray);" +
       "max-width: 480px; margin-bottom: 0.6em;";
@@ -298,8 +297,8 @@
       btn.addEventListener("command", handler);
       return btn;
     };
-    btnRow.appendChild(mkBtn("Backup Now", "backup"));
-    btnRow.appendChild(mkBtn("Restore…", "restore"));
+    btnRow.appendChild(mkBtn("Backup", "backup"));
+    btnRow.appendChild(mkBtn("Restore", "restore"));
     sc.appendChild(btnRow);
     fieldset.appendChild(sc);
 
@@ -628,7 +627,7 @@
         win.setTimeout(() => inject(win, (attempt || 0) + 1), WAIT_MS);
         return;
       }
-      console.warn(TAG, "No visible category buttons; aborting.");
+      console.warn(TAG, "No visible category buttons - aborting.");
       return;
     }
     console.log(TAG, "Cloning model: view=" +
@@ -648,7 +647,7 @@
 
     const main = doc.getElementById("mainPrefPane");
     if (!main) {
-      console.warn(TAG, "#mainPrefPane missing; aborting.");
+      console.warn(TAG, "#mainPrefPane missing - aborting.");
       return;
     }
     main.appendChild(buildPaneContent(doc));
