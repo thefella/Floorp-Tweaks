@@ -46,6 +46,8 @@ const { PlacesUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/PlacesUtils.sys.mjs"
 );
 
+const TAG = "[Floorp-Tweaks][History-Retention]";
+
 const HistoryExpiry = {
   /** Integer pref shared with the Floorp Tweaks pane */
   PREF: "floorptweaks.history.retention",
@@ -79,7 +81,7 @@ const HistoryExpiry = {
     } catch (e) {
       // Wrong pref type (legacy string from v3.9/v3.10 settings) —
       // ignore and let the settings script's migration clean it up.
-      console.warn("[History-Expiry] unreadable pref value; treating as forever:", e);
+      console.warn(TAG, "Unreadable pref value; treating as forever.", e);
       return this.DEFAULT;
     }
   },
@@ -105,12 +107,12 @@ const HistoryExpiry = {
         beginDate,
         endDate,
       });
-      console.info(
-        `[History-Expiry] removed ${removed ? "old" : "0"} visit(s) older than ` +
-        (days === 0 ? "session start" : `${days} day(s)`)
+      console.info(TAG,
+        `Removed ${removed ? "old" : "0"} visit(s) older than ` +
+        (days === 0 ? "session start" : `${days} day(s).`)
       );
     } catch (e) {
-      console.error("[History-Expiry] prune failed:", e);
+      console.error(TAG, "Prune failed.", e);
     }
   },
 

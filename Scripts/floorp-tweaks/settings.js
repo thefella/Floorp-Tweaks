@@ -48,7 +48,10 @@
 "use strict";
 
 (function () {
-  console.log("[Floorp-Tweaks] settings script loaded");
+
+  // ------------------------------------------------------------ log startup ----
+  const TAG                  = '[Floorp-Tweaks][Settings]';
+  console.log(TAG, "Settings script loaded.");
 
   // ------------------------------------------------------------ config ----
   const PANE_VALUE           = "paneFloorpTweaks";
@@ -60,7 +63,7 @@
   const DIRECT_LOAD_DELAY_MS = 400;   // let init_all settle, then route
 
   const BACKUP_PREF = "floorptweaks.workspaceBackup";
-  const BACKUP_SCRIPT_NAME = "floorptweaks.workspaces-backup.uc.js";
+  const BACKUP_SCRIPT_NAME = "workspaces-backup.uc.js";
 
   const HTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -148,7 +151,7 @@
     for (const item of PREFS) {
       if (!Services.prefs.prefHasUserValue(item.pref)) {
         setVal(item.pref, item.def, item.kind);
-        console.log("[Floorp-Tweaks] seeded " + item.pref +
+        console.log(TAG, "Seeded " + item.pref +
           " = " + item.def);
       }
     }
@@ -214,7 +217,7 @@
              " (" + (b.device || "?") + "): " +
              wsCount + " workspaces, " + pinCount + " pins.";
     } catch (e) {
-      return "Backup pref present but unreadable.";
+      return "Backup pref present, but unreadable.";
     }
   }
 
@@ -222,9 +225,7 @@
     const target = backupWindow();
     if (!target) {
       Services.prompt.alert(win, "Workspaces Backup",
-        "The Workspaces Backup script is not loaded in any browser " +
-        "window. Install " + BACKUP_SCRIPT_NAME +
-        " and restart Floorp.");
+        "The Workspaces Backup script is not loaded in any browser window. Install the script and restart Floorp.");
       return;
     }
     if (which === "backup")  target.__ftWorkspacesBackup();
@@ -348,8 +349,8 @@
 
     // Fallback: HTML-namespace moz-checkbox (the moz-controls
     // family is defined as HTML custom elements).
-    console.log("[Floorp-Tweaks] no stock checkbox found; falling " +
-      "back to HTML-namespace moz-checkbox");
+    console.log(TAG, "No stock checkbox element found; falling " +
+      "back to HTML-namespace moz-checkbox.");
     return doc.createElementNS(HTML_NS, "moz-checkbox");
   }
 
@@ -373,13 +374,13 @@
           clone.removeAttribute(attr.name);
         }
       }
-      console.log("[Floorp-Tweaks] cloned stock select widget: " +
+      console.log(TAG, "Cloned stock select element: " +
         clone.localName);
       return clone;
     }
 
-    console.log("[Floorp-Tweaks] no stock select found; falling " +
-      "back to plain HTML <select>");
+    console.log(TAG, "No stock select element found; falling " +
+      "back to plain HTML <select>.");
     return doc.createElementNS(HTML_NS, "select");
   }
 
@@ -401,7 +402,7 @@
     // is harmless (both handlers write the same current value).
     const onToggle = () => {
       setVal(item.pref, cb.checked);
-      console.log("[Floorp-Tweaks] " + item.pref + " -> " + cb.checked);
+      console.log(TAG, "" + item.pref + " -> " + cb.checked);
     };
     cb.addEventListener("change", onToggle);
     cb.addEventListener("command", onToggle);
@@ -452,7 +453,7 @@
       const num = parseInt(sel.value, 10);
       if (Number.isNaN(num)) return;
       setVal(item.pref, num, "int");
-      console.log("[Floorp-Tweaks] " + item.pref + " -> " + num);
+      console.log(TAG, "" + item.pref + " -> " + num);
     });
 
     wrap.appendChild(text);
@@ -509,7 +510,7 @@
       header.setAttribute("iconsrc", ICON);
       section.appendChild(header);
     } catch (e) {
-      console.warn("[Floorp-Tweaks] header build failed; continuing " +
+      console.warn(TAG, "Header build failed; continuing " +
         "without it:", e);
     }
 
@@ -540,7 +541,7 @@
           try {
             fieldset.appendChild(buildRow(doc, item));
           } catch (e) {
-            console.warn("[Floorp-Tweaks] row for " + item.pref +
+            console.warn(TAG, "Row for " + item.pref +
               " failed; skipped:", e);
           }
         }
@@ -548,7 +549,7 @@
         article.appendChild(fieldset);
         section.appendChild(card);
       } catch (e) {
-        console.warn("[Floorp-Tweaks] card \"" + group.label +
+        console.warn(TAG, "Card \"" + group.label +
           "\" failed; skipped:", e);
       }
     }
@@ -557,7 +558,7 @@
     try {
       section.appendChild(buildBackupCard(doc));
     } catch (e) {
-      console.warn("[Floorp-Tweaks] backup card failed; skipped:", e);
+      console.warn(TAG, "Backup card failed; skipped:", e);
     }
 
     pane.appendChild(section);
@@ -586,8 +587,8 @@
     const reg = win.gCategoryInits;
     if (!reg || typeof reg.set !== "function") return false;
     reg.set(PANE_VALUE, { _initted: true, init: () => {} });
-    console.log("[Floorp-Tweaks] registered \"" + PANE_VALUE +
-      "\" with gCategoryInits");
+    console.log(TAG, "Registered \"" + PANE_VALUE +
+      "\" with gCategoryInits.");
     return true;
   }
 
@@ -598,7 +599,7 @@
     seedPrefs();
 
     if (deepQuery(doc, el => el.id === CAT_ID)) {
-      console.log("[Floorp-Tweaks] settings pane already present");
+      console.log(TAG, "Settings pane already present.");
       return;
     }
 
@@ -610,8 +611,8 @@
         win.setTimeout(() => inject(win, (attempt || 0) + 1), WAIT_MS);
         return;
       }
-      console.warn("[Floorp-Tweaks] gCategoryInits unreachable; " +
-        "pane NOT injected (about:preferences architecture changed?)");
+      console.warn(TAG, "gCategoryInits unreachable; " +
+        "pane NOT injected (about:preferences architecture changed?).");
       return;
     }
 
@@ -627,10 +628,10 @@
         win.setTimeout(() => inject(win, (attempt || 0) + 1), WAIT_MS);
         return;
       }
-      console.warn("[Floorp-Tweaks] no visible category buttons; aborting.");
+      console.warn(TAG, "No visible category buttons; aborting.");
       return;
     }
-    console.log("[Floorp-Tweaks] cloning model: view=" +
+    console.log(TAG, "Cloning model: view=" +
       model.getAttribute("view"));
 
     const cat = model.cloneNode(true);
@@ -647,7 +648,7 @@
 
     const main = doc.getElementById("mainPrefPane");
     if (!main) {
-      console.warn("[Floorp-Tweaks] #mainPrefPane missing; aborting.");
+      console.warn(TAG, "#mainPrefPane missing; aborting.");
       return;
     }
     main.appendChild(buildPaneContent(doc));
@@ -662,7 +663,7 @@
         try {
           win.gotoPref(PANE_VALUE);
         } catch (e) {
-          console.warn("[Floorp-Tweaks] gotoPref(hash) failed: " + e);
+          console.warn(TAG, "gotoPref(hash) failed: " + e);
         }
       }
       // Any other hash belongs to stock categories; native code
@@ -678,9 +679,9 @@
         if (win.location.hash !== "#" + ANCHOR) return;
         try {
           win.gotoPref(PANE_VALUE);
-          console.log("[Floorp-Tweaks] deep link routed after init_all");
+          console.log(TAG, "Deep-link routed after init_all.");
         } catch (e) {
-          console.warn("[Floorp-Tweaks] deep-link gotoPref failed: " + e);
+          console.warn(TAG, "Deep-link gotoPref failed: " + e);
         }
       }, DIRECT_LOAD_DELAY_MS);
     }
@@ -705,8 +706,8 @@
       }
     }, { once: true });
 
-    console.log("[Floorp-Tweaks] settings pane injected OK " +
-      "(native registration, no interception)");
+    console.log(TAG, "Settings pane injected OK " +
+      "(native registration, no interception).");
   }
 
   // -------------------------------------------------------------- hook ----
@@ -717,11 +718,11 @@
     let href = "";
     try { href = win.location && win.location.href; }
     catch (e) { return; }
-    console.debug("[Floorp-Tweaks] global created: " + href);
+    console.debug(TAG, "Global created: " + href);
 
     if (href && isPrefsUrl(href)) {
-      console.log("[Floorp-Tweaks] matched about:preferences (" +
-        win.document.readyState + ")");
+      console.log(TAG, "Matched about:preferences (" +
+        win.document.readyState + ").");
       if (win.document.readyState === "loading") {
         win.document.addEventListener(
           "DOMContentLoaded", () => inject(win), { once: true });

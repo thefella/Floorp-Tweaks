@@ -134,10 +134,10 @@
   if (!window.gBrowser || window.__psarLoaded) return;
   window.__psarLoaded = true;
 
-  const LOG_TAG = "[Floorp-Tweaks][PanelReload]";
+  const TAG = "[Floorp-Tweaks][Panel-Reload]";
   const DEBUG   = false;
-  const log     = (...a) => { if (DEBUG) console.log(LOG_TAG, ...a); };
-  const logErr  = (...a) => { if (DEBUG) console.error(LOG_TAG, ...a); };
+  const log     = (...a) => { if (DEBUG) console.log(TAG, ...a); };
+  const logErr  = (...a) => { if (DEBUG) console.error(TAG, ...a); };
 
   const g        = window.gBrowser;
   const PREF     = "floorptweaks.panelReload";
@@ -163,7 +163,7 @@
     try {
       return JSON.parse(Services.prefs.getStringPref(PREF, "{}")) || {};
     } catch (e) {
-      logErr("Pref is not valid JSON - treating as empty:", e.message || e);
+      logErr("Pref is not valid JSON - treating as empty.", e.message || e);
       return {};
     }
   };
@@ -195,7 +195,7 @@
         }
       }
     } catch (e) {
-      logErr("floorp.panelSidebar.data unreadable - pruning disabled:",
+      logErr("Pref 'floorp.panelSidebar.data' unreadable - pruning disabled.",
         e.message || e);
     }
     return out;
@@ -211,7 +211,7 @@
       if (!definedUuids.has(key.toLowerCase())) {
         delete raw[key];
         dirty = true;
-        log("Pruned orphaned config key", key);
+        log("Pruned orphaned config key.", key);
       }
     }
     if (dirty) {
@@ -225,7 +225,7 @@
     const map = new Map();
     for (const [key, val] of Object.entries(obj || {})) {
       if (!UUID_RE.test(key)) {
-        logErr(`Ignoring non-UUID config key "${key}" (UUID keys only)`);
+        logErr(`Ignoring non-UUID config key: "${key}" (UUID keys only).`);
         continue;
       }
       let minutes, onlyWhenVisible = false, preload = true;
@@ -236,11 +236,11 @@
         onlyWhenVisible = val.onlyWhenVisible === true;
         preload = val.preload !== false;
       } else {
-        logErr(`Bad value for "${key}" - expected number or object`);
+        logErr(`Bad value for "${key}" - expected number or object.`);
         continue;
       }
       if (!Number.isFinite(minutes) || minutes <= 0) {
-        logErr(`Bad minutes for "${key}" - skipping`);
+        logErr(`Bad minutes for "${key}" - skipping.`);
         continue;
       }
       map.set(key.toLowerCase(), {
@@ -311,7 +311,7 @@
           { bubbles: true, cancelable: true, view: window }));
       } catch (e) { /* keep going - el.click() below is the fallback */ }
     }
-    try { el.click(); } catch (e) { logErr("click failed:", e); }
+    try { el.click(); } catch (e) { logErr("Click failed.", e); }
   };
 
   const currentlyDisplayedUuid = () => {
@@ -358,10 +358,10 @@
       b.setAttribute("psar-synthetic", "true");
       b.setAttribute("hidden", "true");
       box.appendChild(b);
-      log("Fallback synthetic mount for", uuid);
+      log("Fallback synthetic mount for ", uuid);
       return true;
     } catch (e) {
-      logErr("Synthetic mount failed for", uuid, e);
+      logErr("Synthetic mount failed for ", uuid, e);
       return false;
     } finally {
       setTimeout(() => pendingMounts.delete(uuid), 1000);
@@ -379,10 +379,10 @@
         setTimeout(() => {
           try {
             if (b.isConnected && panelVisible(b)) {
-              log("First reveal of synthetic panel - reloading", b.id);
+              log("First reveal of synthetic panel - reloading.", b.id);
               b.reload();
             }
-          } catch (e) { logErr("First-reveal reload failed:", e); }
+          } catch (e) { logErr("First-reveal reload failed.", e); }
         }, 300);
       }
     }
@@ -471,7 +471,7 @@
         .style.width = `${pct}%`;
       track.setAttribute("aria-valuenow", String(pct));
       track.setAttribute("title",
-        `Auto-reload: ${Math.max(0, Math.ceil(remain / 1000))} s remaining` +
+        `Auto-reload: ${Math.max(0, Math.ceil(remain / 1000))}s remaining.` +
         ` (every ${Math.round(st.ms / 60000)} min)`);
     }
   };
@@ -523,14 +523,14 @@
         ctxCapturedAt = Date.now();
         ctxScreenX = event.screenX || 0;
         ctxScreenY = event.screenY || 0;
-        log("Context event target:", ctxUuid, `(via ${resolved.via})`);
+        log("Context event target: ", ctxUuid, `(via ${resolved.via})`);
       } else {
         // No panel target in the path - invalidate any stash.
         ctxUuid = null;
         ctxCapturedAt = 0;
-        log("Context event: no panel target in path");
+        log("Context event: no panel target in path.");
       }
-    } catch (e) { logErr("contextmenu capture failed:", e); }
+    } catch (e) { logErr("Contextmenu capture failed: ", e); }
   };
   window.addEventListener("contextmenu", onGlobalContextMenu, true);
 
@@ -545,7 +545,7 @@
     if (minutes === 0) {
       // Disable: remove the entry entirely (unset = no auto-reload).
       delete raw[uuid];
-      log("Disabled auto-reload for", uuid);
+      log("Disabled auto-reload for ", uuid);
     } else {
       const prev = raw[uuid];
       if (prev && typeof prev === "object") {
@@ -553,7 +553,7 @@
       } else {
         raw[uuid] = minutes;
       }
-      log("Set auto-reload for", uuid, "to", minutes, "min");
+      log("Set auto-reload for", uuid, "to", minutes, "min.");
     }
     lastTimerSig = null; // config edits must always re-arm
     writeRawConfig(raw);
@@ -607,7 +607,7 @@
     } else {
       popup.appendChild(item);
     }
-    log("Auto-Reload menu item (re-)injected into #webpanel-context");
+    log("Auto-Reload menu item (re-)injected into #webpanel-context.");
   };
 
   // Build our standalone ladder popup once. Attached to the document
@@ -644,7 +644,7 @@
     ladder.appendChild(off);
 
     document.documentElement.appendChild(ladder);
-    log("Ladder popup created (standalone, at document root)");
+    log("Ladder popup created (standalone, at document root).");
   };
 
   // Open our ladder popup at the stashed right-click position.
@@ -657,7 +657,7 @@
     try {
       ladder.openPopupAtScreen(ctxScreenX, ctxScreenY, false);
     } catch (e) {
-      logErr("openPopupAtScreen failed - centred fallback:", e);
+      logErr("openPopupAtScreen failed - centred fallback: ", e);
       try { ladder.openPopupAtScreen(-1, -1, false); } catch (e2) {}
     }
   };
@@ -708,7 +708,7 @@
     ctxCapturedAt = 0;
 
     log("Context menu target:", resolved ?
-      `${resolved.uuid} (via ${resolved.via})` : "(none - hiding item)");
+      `${resolved.uuid} (via ${resolved.via}).` : "(none - hiding item).");
 
     if (!resolved?.uuid) {
       // No web-panel target (e.g. a static panel) - hide our item.
@@ -738,7 +738,7 @@
     if (!popup.hasAttribute("ft-reload-wired")) {
       popup.setAttribute("ft-reload-wired", "true");
       popup.addEventListener("popupshowing", onCtxShowing);
-      log("Popup handlers wired for #webpanel-context");
+      log("Popup handlers wired for #webpanel-context.");
     }
   };
 
@@ -756,20 +756,20 @@
 
     const original = currentlyDisplayedUuid();
     log("Startup mount via clicks for:", todo.join(", "),
-        "| restoring", original || "(none)");
+        "| restoring", original || "(none).");
 
     for (const uuid of todo) {
       const el = panelEntryEl(uuid);
       if (!el) {
-        logErr("No selector entry for panel", uuid, "- synthetic fallback");
+        logErr("No selector entry for panel", uuid, "- synthetic fallback.");
         mountBrowserFor(uuid);
         continue;
       }
       clickPanelEntry(el);
       if (await waitForMounted(uuid)) {
-        log("Natively mounted", uuid, "via simulated click");
+        log("Natively mounted", uuid, "via simulated click.");
       } else {
-        logErr("Click did not mount", uuid, "- synthetic fallback");
+        logErr("Click did not mount", uuid, "- synthetic fallback.");
         mountBrowserFor(uuid);
       }
       await sleep(300); // let Floorp settle between panel switches
@@ -847,7 +847,7 @@
           panels.map((b) => {
             const u = panelUuid(b);
             return `${b.id}${b.hasAttribute("psar-synthetic")
-              ? " [synthetic]" : ""} <- ${u || "(unknown)"}`;
+              ? " [synthetic]" : ""} <- ${u || "(unknown)."}`;
           }));
 
       const now = Date.now();
@@ -863,7 +863,7 @@
           try {
             if (d.browser.isConnected &&
                 (!d.onlyWhenVisible || panelVisible(d.browser))) {
-              log("Reloading", d.browser.id, "(panel", d.uuid + ")");
+              log("Reloading", d.browser.id, "(panel", d.uuid + ").");
               d.browser.reload();
             } else {
               log("Skip reload (hidden/disconnected):", d.browser.id);
@@ -873,12 +873,12 @@
           } catch (e) { logErr("Reload failed:", e); }
         }, d.ms);
         timers.push({ browser: d.browser, intervalId, uuid: d.uuid, ms: d.ms });
-        log(`Watching ${d.browser.id} every ${d.ms / 60000} min ` +
-            `(visible-only: ${d.onlyWhenVisible})`);
+        log(`Watching ${d.browser.id} every ${d.ms / 60000}min ` +
+            `(visible-only: ${d.onlyWhenVisible}).`);
       }
       updateBars();
       log(`Matched ${desired.length}/${panels.length} mounted panels to ` +
-          `${cfg.size} config entries`);
+          `${cfg.size} config entries.`);
     } catch (e) {
       logErr("build() failed:", e);
     }
@@ -902,7 +902,7 @@
   }
 
   Services.prefs.addObserver(PREF, () => {
-    log("Config pref changed - rebuilding timers");
+    log("Config pref changed - rebuilding timers.");
     try {
       lastTimerSig = null; // config edits must always re-arm
       mountConfiguredPanels(); // newly added entries get mounted too

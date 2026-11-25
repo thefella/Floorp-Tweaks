@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name           Tab Resource Preview (Floorp)
+// @name           Tab Resources Hover (Floorp)
 // @description    Shows per-tab memory and CPU% in the tab hover preview
 //                 panel (#tab-preview-panel). Samples ChromeUtils.
 //                 requestProcInfo() — the API behind about:processes — and
@@ -31,7 +31,7 @@
   if (window.__floorpTweaksTabResourcePreviewLoaded) return;
   window.__floorpTweaksTabResourcePreviewLoaded = true;
 
-  const LOGTAG = "[Floorp-Tweaks][tab-resource-preview] ";
+  const TAG = "[Floorp-Tweaks][Tab-Resources-Hover]";
 
   // ---------------- tweakables ----------------
   const SAMPLE_INTERVAL_MS = 5000; // polling cadence for process info
@@ -138,7 +138,7 @@
 
       prevSnapshot = snap;
     } catch (err) {
-      console.error(LOGTAG + "sampling failed:", err);
+      console.error(TAG, "Sampling failed:", err);
     }
   }
 
@@ -146,7 +146,7 @@
   function start() {
     updateTabResources();
     window.setInterval(updateTabResources, SAMPLE_INTERVAL_MS);
-    console.info(LOGTAG + "running.");
+    console.info(TAG, "Tabs are now being monitored for resource usage.");
   }
 
   if (window.gBrowserInit && window.gBrowserInit.delayedStartupFinished) {
@@ -184,7 +184,7 @@
   // ---------------- preview panel injection ----------------
   const panel = document.getElementById("tab-preview-panel");
   if (!panel) {
-    console.warn(LOGTAG + "#tab-preview-panel not found in this build.");
+    console.warn(TAG, "#tab-preview-panel was not found in this build.");
     return;
   }
 
@@ -271,7 +271,5 @@
   });
   observer.observe(panel, { childList: true, subtree: true });
 
-  console.info(
-    LOGTAG + "script loaded, waiting for delayed startup."
-  );
+  console.info(TAG, "Script loaded and waiting for delayed startup.");
 })();

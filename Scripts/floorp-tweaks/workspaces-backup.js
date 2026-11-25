@@ -65,10 +65,10 @@
   if (!window.gBrowser || window.__ftWsbLoaded) return;
   window.__ftWsbLoaded = true;
 
-  const LOG_TAG = "[Floorp-Tweaks][WSBackup]";
+  const TAG = "[Floorp-Tweaks][Workspace-Backup]";
   const DEBUG   = false;
-  const log     = (...a) => { if (DEBUG) console.log(LOG_TAG, ...a); };
-  const logErr  = (...a) => { if (DEBUG) console.error(LOG_TAG, ...a); };
+  const log     = (...a) => { if (DEBUG) console.log(TAG, ...a); };
+  const logErr  = (...a) => { if (DEBUG) console.error(TAG, ...a); };
 
   const g           = window.gBrowser;
   const STORE_PREF  = "floorp.workspaces.v4.store";

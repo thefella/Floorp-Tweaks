@@ -72,8 +72,8 @@
     sub.append(DIR_NAME);
 
     if (!sub.exists() || !sub.isDirectory()) {
-      console.log(TAG, `subfolder "chrome/JS/${DIR_NAME}" not found ` +
-        "- nothing to load (fresh profile before the installer ran?)");
+      console.log(TAG, `The subfolder "chrome/JS/${DIR_NAME}" was not found ` +
+        "- nothing to load (fresh profile before the installer ran?).");
       return;
     }
 
@@ -84,7 +84,7 @@
       const name = f.leafName;
       if (name.startsWith(".")) continue;          // editor/system droppings
       if (!name.endsWith(".js")) {
-        console.log(TAG, "skipping non-.js file:", name);
+        console.log(TAG, "Skipping non-.js file: ", name);
         continue;
       }
       entries.push(name);
@@ -92,7 +92,7 @@
     entries.sort((a, b) => a.localeCompare(b));
 
     if (!entries.length) {
-      console.log(TAG, `no .js files in chrome/JS/${DIR_NAME}/`);
+      console.log(TAG, `No .js files found in chrome/JS/${DIR_NAME}/`);
       return;
     }
 
@@ -101,15 +101,15 @@
       try {
         Services.scriptloader.loadSubScript(BASE_URL + name, window);
         ok++;
-        console.log(TAG, "loaded", name);
+        console.log(TAG, "Loaded", name);
       } catch (e) {
         failed++;
-        console.error(TAG, "FAILED to load", name, e);
+        console.error(TAG, "FAILED to load ", name, e);
       }
     }
-    console.log(TAG, `suite loaded: ${ok} script(s)` +
+    console.log(TAG, `Loaded: ${ok} script(s).` +
       (failed ? `, ${failed} FAILED` : ""));
   } catch (e) {
-    console.error(TAG, "loader failed:", e);
+    console.error(TAG, "Loader failed:", e);
   }
 })();

@@ -88,7 +88,7 @@
   if (!window.gBrowser || window.__pwptLoaded) return;
   window.__pwptLoaded = true;
 
-  const LOG_TAG = "[Floorp-Tweaks][WSPins]";
+  const LOG_TAG = "[Floorp-Tweaks][Per-Workspace-Pinned-Tabs]";
   const DEBUG   = false;
   const log     = (...a) => { if (DEBUG) console.log(LOG_TAG, ...a); };
   const logErr  = (...a) => { if (DEBUG) console.error(LOG_TAG, ...a); };
@@ -140,9 +140,9 @@
           log("Workspaces module via ladder:", expected);
           return { path: expected, mod };
         }
-        log("Ladder module loaded but exposes no _.getCtx - scanning");
+        log("Ladder module loaded but exposes no _.getCtx - scanning...");
       } catch (e) {
-        log("Ladder import failed:", e.message || e, "- scanning");
+        log("Ladder import failed:", e.message || e, "- scanning...");
       }
     }
 
@@ -174,7 +174,7 @@
       if (found) {
         this.module = found.mod;
       } else {
-        log("No workspaces module found - attribute fallback mode");
+        log("No workspaces module found - attribute fallback mode.");
         this.fallback = true;
         this.setProperInit();
         return;
@@ -199,7 +199,7 @@
               clearInterval(this.interval);
               this.interval = null;
               this.setProperInit();
-              log("Workspaces context retrieved on retry");
+              log("Workspaces context retrieved on retry.");
             }
           } catch (e) { /* keep retrying */ }
         }, 100);
@@ -271,7 +271,7 @@
     }
     tab.setAttribute("floorpWorkspaceId", ws);
     g.selectedTab = tab;
-    log("Opened fallback tab in workspace", ws);
+    log("Opened fallback tab in workspace.", ws);
   };
 
   // If the selection sits outside `ws` while tabs of `ws` remain, move it
@@ -296,7 +296,7 @@
       .slice()
       .sort((a, b) => lastAccessedOf(b) - lastAccessedOf(a))[0];
     g.selectedTab = succ;
-    log("Kept selection in workspace", ws, `(${reason})`);
+    log("Kept selection in workspace:", ws, `(${reason})`);
     return true;
   };
 
@@ -449,13 +449,13 @@
           }
         }
         changed = true;
-        log("Repaired own-pin front contiguity in workspace", ws);
+        log("Repaired own-pin front contiguity in workspace.", ws);
       }
     }
 
     try { g.tabContainer._invalidateCachedVisibleTabs(); } catch (e) {}
     setStripVisibility();
-    if (changed) log("Updated pinned tabs for workspace", ws);
+    if (changed) log("Updated pinned tabs for workspace.", ws);
   };
 
   // ================================ drivers ================================
@@ -469,7 +469,7 @@
       tabsListObserver.observe(tabsList,
         { attributes: true, childList: true, subtree: true });
     } else {
-      log("#tabbrowser-arrowscrollbox not found - observers not attached");
+      log("#tabbrowser-arrowscrollbox not found - observers not attached.");
     }
 
     // Manual drag detection: covers horizontal layouts (which have no
@@ -518,7 +518,7 @@
 
         if (tabWs && tabWs !== cur) {
           log("Selected tab workspace", tabWs, "!= Floorp state", cur,
-              "- syncing");
+              "- syncing...");
           wrapper.setWS(tabWs);
         }
         updatePinnedTabs(false);

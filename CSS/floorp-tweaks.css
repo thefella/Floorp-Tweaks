@@ -2,13 +2,13 @@
 /* Comment out what you don't need */
 
 /* Needed for workspace pinned tabs script */
-@import url("floorp-tweaks/floorp-tweaks-hide-pinned-tabs.css");
+@import url("floorp-tweaks/hide-pinned-tabs.css");
 
 /* Unloaded and not-yet-loaded tabs styling (faded out and line-through) */
-@import url("floorp-tweaks/floorp-tweaks-unloaded-tabs.css");
+@import url("floorp-tweaks/unloaded-tabs.css");
 
 /* Remove the password icon from the Floorp sidebar */
-@import url("floorp-tweaks/floorp-tweaks-remove-panel-sidebar-password-icon.css");
+@import url("floorp-tweaks/remove-panel-sidebar-password-icon.css");
 
 /* Keep the tab audio indicator, but make it non-clickable */
-@import url("floorp-tweaks/floorp-tweaks-tab-audio-indicator.css");
+@import url("floorp-tweaks/tab-audio-indicator.css");
